@@ -1,0 +1,23 @@
+[gd_scene format=3 uid="uid://c008osqftpyi4"]
+
+[ext_resource type="Script" uid="uid://cptktslpf0ebm" path="res://node_2d.gd" id="1_ig7tw"]
+
+[node name="Node2D" type="Node2D" unique_id=156565101]
+script = ExtResource("1_ig7tw")
+
+[node name="Label" type="Label" parent="." unique_id=1092379468]
+offset_left = -81.0
+offset_top = 46.0
+offset_right = -41.0
+offset_bottom = 107.0
+text = "0
+"
+
+[node name="Button" type="Button" parent="." unique_id=2011461649]
+offset_left = -94.0
+offset_top = 10.0
+offset_right = -33.0
+offset_bottom = 41.0
+text = "Add 1."
+
+[connection signal="pressed" from="Button" to="." method="_on_button_pressed"]
