@@ -154,6 +154,43 @@ var spread_rush_btn: Button = null
 var spread_result_popup: Control = null
 var spread_result_label: Label = null
 
+# ── Crusade ───────────────────────────────────────────────────────────────────
+var crusading: bool = false
+var crusade_timer: float = 0.0
+const CRUSADE_TIME := 7200.0   # 2 hours
+var crusade_sent: int = 0
+var crusade_selector_count: int = 1
+var crusading_nodes: Array = []
+var crusade_go_btn: Button = null
+var crusade_selector_row: HBoxContainer = null
+var crusade_selector_label: Label = null
+var crusade_progress_container: VBoxContainer = null
+var crusade_bar: ColorRect = null
+var crusade_timer_label: Label = null
+var crusade_rush_btn: Button = null
+var crusade_result_popup: Control = null
+var crusade_result_title: Label = null
+var crusade_result_label: Label = null   # soldier casualty line
+var crusade_phase1: Control = null       # chests view
+var crusade_phase2: Control = null       # rewards view
+var crusade_chests_row: HBoxContainer = null
+var crusade_rewards_label: Label = null
+var crusade_marcus_container: Control = null
+var crusade_dismiss_btn: Button = null
+var crusade_pending: Dictionary = {}     # stores results between phase1 and phase2
+
+# ── Hero Cards ────────────────────────────────────────────────────────────────
+var marcus_obtained: bool = false
+var hero_deck_chip: PanelContainer = null
+var hero_deck_panel: PanelContainer = null
+var generals_quarters: Area2D = null
+var generals_quarters_built: bool = false
+var generals_quarters_build_row: HBoxContainer = null
+var generals_quarters_sep: Node = null
+var marcus_character_node: CharacterBody2D = null
+var marcus_leading_crusade: bool = false
+var crusade_bring_marcus_btn: Button = null
+
 # ── Timers / state ────────────────────────────────────────────────────────────
 var resource_timer    := 0.0
 const RESOURCE_INTERVAL := 3.0
@@ -252,6 +289,15 @@ func _process(delta):
 		if spread_timer <= 0.0:
 			_complete_spread()
 
+	# Crusade countdown
+	if crusading and crusade_timer > 0.0:
+		crusade_timer -= delta
+		if crusade_timer <= 0.0:
+			crusade_timer = 0.0
+			_complete_crusade()
+		else:
+			_update_crusade_ui()
+
 	# Soldier training countdown
 	if training and training_timer > 0.0:
 		training_timer -= delta
@@ -307,10 +353,11 @@ func _build_world():
 	world = Node2D.new()
 	add_child(world)
 
-	# Grass base — bright vibrant green like FarmVille
-	var grass := ColorRect.new()
-	grass.color = Color(0.35, 0.72, 0.22)
-	grass.size  = Vector2(MAP_WIDTH, MAP_HEIGHT)
+	# Map background — painted grass + stone path texture
+	var grass := TextureRect.new()
+	grass.texture      = load("res://New Background.png")
+	grass.stretch_mode = TextureRect.STRETCH_SCALE
+	grass.size         = Vector2(MAP_WIDTH, MAP_HEIGHT)
 	grass.mouse_filter = Control.MOUSE_FILTER_IGNORE   # don't block Area2D clicks
 	world.add_child(grass)
 
@@ -329,8 +376,8 @@ func _build_world():
 	# Scattered trees (avoid center area)
 	_plant_trees(rng)
 
-	# Dirt path (circle around shelter)
-	_draw_path()
+	# Dirt path disabled — background texture already has paths baked in
+	# _draw_path()
 
 	# Humble Shelter — interactive so you can tap it for capacity info
 	shelter = _make_building("shelter", SHELTER_POS, "Humble Shelter", true)
@@ -458,6 +505,8 @@ func _build_ui():
 	_build_tutorial_panel(ui)
 	_build_info_popup(ui)
 	_build_wheel_popup(ui)
+	_build_crusade_result_popup(ui)
+	_build_hero_deck_panel(ui)
 
 
 func _build_top_bar(ui: CanvasLayer):
@@ -515,6 +564,30 @@ func _build_top_bar(ui: CanvasLayer):
 	wheel_chip_node.add_child(wchip_lbl)
 	wheel_chip_node.gui_input.connect(_on_wheel_chip_input)
 	hbox.add_child(wheel_chip_node)
+
+	# ── Hero Deck chip ──────────────────────────────────────────────────────
+	var hdchip_style := StyleBoxFlat.new()
+	hdchip_style.bg_color      = Color(0.55, 0.35, 0.05, 0.90)
+	hdchip_style.border_color  = Color(0.95, 0.75, 0.20)
+	hdchip_style.set_border_width_all(1)
+	hdchip_style.set_corner_radius_all(8)
+	hdchip_style.content_margin_left   = 8
+	hdchip_style.content_margin_right  = 8
+	hdchip_style.content_margin_top    = 4
+	hdchip_style.content_margin_bottom = 4
+	hero_deck_chip = PanelContainer.new()
+	hero_deck_chip.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	hero_deck_chip.add_theme_stylebox_override("panel", hdchip_style)
+	hero_deck_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	hero_deck_chip.visible = false   # shows only after first hero obtained
+	var hdchip_lbl := Label.new()
+	hdchip_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	hdchip_lbl.text = "🃏 Heroes"
+	hdchip_lbl.add_theme_font_size_override("font_size", 14)
+	hdchip_lbl.add_theme_color_override("font_color", Color(0.98, 0.88, 0.30))
+	hero_deck_chip.add_child(hdchip_lbl)
+	hero_deck_chip.gui_input.connect(_on_hero_deck_chip_input)
+	hbox.add_child(hero_deck_chip)
 
 	_build_people_panel(ui)
 
@@ -775,6 +848,11 @@ func _build_build_menu(ui: CanvasLayer):
 	_add_build_row(list, "Preacher Shelter",     "Houses Preachers — they\ngenerate +2 Faith/tick each", "50g", _on_build_preacher_shelter,  Color(0.30, 0.82, 0.75))
 	_add_build_row(list, "Barracks",             "Trains Believers into\nSoldiers (30 min each)",        "80g", _on_build_armory,            Color(0.85, 0.28, 0.18))
 	_add_build_row(list, "Garrison",             "Houses Soldiers so\nthey are ready to serve",          "60g", _on_build_garrison,          Color(0.65, 0.18, 0.12))
+	generals_quarters_build_row = _add_build_row(list, "General's Quarters", "Home for Marcus the Iron Fist\n(Military Hero)", "100g", _on_build_generals_quarters, Color(0.80, 0.55, 0.10))
+	generals_quarters_build_row.visible = false   # unlocks when Marcus card is obtained
+	# Hide the separator line that _add_build_row added just before this row
+	generals_quarters_sep = list.get_child(generals_quarters_build_row.get_index() - 1)
+	generals_quarters_sep.visible = false
 
 	# Tutorial arrow — points at the temple row, pulses red, hidden once built
 	temple_build_indicator = Label.new()
@@ -1858,13 +1936,99 @@ func _build_garrison_panel(ui: CanvasLayer):
 
 	_panel_sep(body, Color(0.75, 0.22, 0.14))
 
-	var raid_btn := Button.new()
-	raid_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	raid_btn.text = "⚔  Raid a Village   (Coming Soon)"
-	raid_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	raid_btn.disabled = true
-	_style_action_btn(raid_btn, Color(0.75, 0.22, 0.14))
-	body.add_child(raid_btn)
+	# ── Go on a Crusade button ──
+	crusade_go_btn = Button.new()
+	crusade_go_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_go_btn.text = "⚔  Go on a Crusade   (2 hr)"
+	crusade_go_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_action_btn(crusade_go_btn, Color(0.75, 0.22, 0.14))
+	crusade_go_btn.pressed.connect(_on_crusade_pressed)
+	body.add_child(crusade_go_btn)
+
+	# ── Selector row (hidden until button tapped) ──
+	crusade_selector_row = HBoxContainer.new()
+	crusade_selector_row.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_selector_row.add_theme_constant_override("separation", 6)
+	crusade_selector_row.visible = false
+	body.add_child(crusade_selector_row)
+
+	var minus_btn := Button.new()
+	minus_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	minus_btn.text = "−"
+	minus_btn.custom_minimum_size = Vector2(32, 0)
+	minus_btn.pressed.connect(func():
+		crusade_selector_count = max(1, crusade_selector_count - 1)
+		_update_crusade_selector_label())
+	crusade_selector_row.add_child(minus_btn)
+
+	crusade_selector_label = Label.new()
+	crusade_selector_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_selector_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crusade_selector_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	crusade_selector_label.add_theme_font_size_override("font_size", 13)
+	crusade_selector_row.add_child(crusade_selector_label)
+
+	var plus_btn := Button.new()
+	plus_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	plus_btn.text = "+"
+	plus_btn.custom_minimum_size = Vector2(32, 0)
+	plus_btn.pressed.connect(func():
+		crusade_selector_count = min(soldiers_in_garrison, crusade_selector_count + 1)
+		_update_crusade_selector_label())
+	crusade_selector_row.add_child(plus_btn)
+
+	var send_btn := Button.new()
+	send_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	send_btn.text = "March →"
+	_style_action_btn(send_btn, Color(0.75, 0.22, 0.14))
+	send_btn.pressed.connect(_on_crusade_confirm_pressed)
+	crusade_selector_row.add_child(send_btn)
+
+	# ── Bring Marcus toggle (hidden until he's available) ──
+	crusade_bring_marcus_btn = Button.new()
+	crusade_bring_marcus_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_bring_marcus_btn.text = "⚔ Bring Marcus as Leader"
+	crusade_bring_marcus_btn.toggle_mode = true
+	crusade_bring_marcus_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	crusade_bring_marcus_btn.visible = false
+	_style_action_btn(crusade_bring_marcus_btn, Color(0.80, 0.55, 0.10))
+	crusade_selector_row.get_parent().add_child(crusade_bring_marcus_btn)   # sibling of selector_row, inside body
+
+	# ── Progress area (hidden until mission started) ──
+	crusade_progress_container = VBoxContainer.new()
+	crusade_progress_container.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_progress_container.add_theme_constant_override("separation", 6)
+	crusade_progress_container.visible = false
+	body.add_child(crusade_progress_container)
+
+	crusade_timer_label = Label.new()
+	crusade_timer_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crusade_timer_label.add_theme_font_size_override("font_size", 13)
+	crusade_timer_label.add_theme_color_override("font_color", Color(0.92, 0.90, 0.98))
+	crusade_progress_container.add_child(crusade_timer_label)
+
+	var bar_bg := ColorRect.new()
+	bar_bg.color = Color(0.18, 0.08, 0.08)
+	bar_bg.custom_minimum_size = Vector2(0, 12)
+	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	crusade_progress_container.add_child(bar_bg)
+
+	crusade_bar = ColorRect.new()
+	crusade_bar.color = Color(0.85, 0.25, 0.10)
+	crusade_bar.anchor_top    = 0.0
+	crusade_bar.anchor_bottom = 1.0
+	crusade_bar.anchor_left   = 0.0
+	crusade_bar.anchor_right  = 0.0
+	bar_bg.add_child(crusade_bar)
+
+	crusade_rush_btn = Button.new()
+	crusade_rush_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_rush_btn.text = "⚡ Rush  (1 Faith = -10 min)"
+	crusade_rush_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_action_btn(crusade_rush_btn, Color(0.72, 0.55, 1.00))
+	crusade_rush_btn.pressed.connect(_on_crusade_rush_pressed)
+	crusade_progress_container.add_child(crusade_rush_btn)
 
 	_panel_sep(body, Color(0.75, 0.22, 0.14))
 
@@ -2227,6 +2391,13 @@ func _on_build_garrison():
 		return
 	_try_start_placement("garrison", 60)
 
+func _on_build_generals_quarters():
+	if generals_quarters != null:
+		return
+	if not marcus_obtained:
+		return
+	_try_start_placement("generals_quarters", 100)
+
 
 func _try_start_placement(type: String, cost: int):
 	if active_construction_timer > 0.0:
@@ -2367,6 +2538,16 @@ func _complete_construction():
 			if soldier_waiting_at_armory and training_node != null:
 				soldier_waiting_at_armory = false
 				_walk_via_road(training_node, armory.position + Vector2(0, 20), garrison.position + Vector2(randf_range(-15, 15), 48), _on_soldier_arrived_at_garrison)
+		"generals_quarters":
+			generals_quarters_built = true
+			generals_quarters = b
+			b.tapped.connect(_on_generals_quarters_tapped)
+			_draw_road(garrison.position + Vector2(0, 48), b.position + Vector2(0, 48))
+			# Spawn Marcus wandering around his new quarters
+			var marcus_script := load("res://marcus_character.gd")
+			marcus_character_node = marcus_script.new()
+			world.add_child(marcus_character_node)
+			marcus_character_node.setup(b.position + Vector2(0, 20))
 		"shelter":
 			believer_shelter_count += 1
 			believer_capacity = believer_shelter_count * 5
@@ -2675,6 +2856,9 @@ func _on_garrison_tapped():
 	garrison_panel.visible = not garrison_panel.visible
 	if garrison_panel.visible:
 		garrison_soldier_label.text = "%d / 5" % soldiers_in_garrison
+
+func _on_generals_quarters_tapped():
+	_show_building_info(generals_quarters, "General's Quarters\nMarcus the Iron Fist rests here\nbetween crusades.")
 
 func _on_soldier_arrived_at_garrison():
 	if training_node:
@@ -3368,3 +3552,539 @@ class _PriestessDrawer extends Node2D:
 		for sp in [Vector2(-65, -130), Vector2(68, -100), Vector2(-70, -60), Vector2(72, -150)]:
 			draw_circle(sp, 3, Color(0.95, 0.90, 0.55, 0.85))
 			draw_circle(sp, 1, Color(1.0, 1.0, 0.9))
+
+# ── Crusade functions ─────────────────────────────────────────────────────────
+
+func _on_crusade_pressed():
+	if crusading or soldiers_in_garrison <= 0:
+		return
+	crusade_selector_count = mini(1, soldiers_in_garrison)
+	_update_crusade_selector_label()
+	crusade_go_btn.visible = false
+	crusade_selector_row.visible = true
+	# Show Marcus toggle only when he's available and at his quarters
+	if crusade_bring_marcus_btn != null:
+		crusade_bring_marcus_btn.visible = generals_quarters_built and marcus_obtained and not marcus_leading_crusade
+		crusade_bring_marcus_btn.button_pressed = false
+
+
+func _update_crusade_selector_label():
+	var s := "s" if crusade_selector_count != 1 else ""
+	crusade_selector_label.text = "%d soldier%s" % [crusade_selector_count, s]
+
+
+func _on_crusade_confirm_pressed():
+	if crusading or crusade_selector_count <= 0 or soldiers_in_garrison < crusade_selector_count:
+		return
+	crusading = true
+	crusade_sent = crusade_selector_count
+	soldiers_in_garrison -= crusade_sent
+	garrison_soldier_label.text = "%d / 5" % soldiers_in_garrison
+
+	# Hide soldiers visually during crusade
+	var hidden: int = 0
+	for sol in soldiers:
+		if hidden >= crusade_sent:
+			break
+		if is_instance_valid(sol):
+			sol.visible = false
+			crusading_nodes.append(sol)
+			hidden += 1
+
+	# If Marcus is toggled as leader, hide him from his quarters
+	marcus_leading_crusade = crusade_bring_marcus_btn != null and crusade_bring_marcus_btn.button_pressed
+	if marcus_leading_crusade and is_instance_valid(marcus_character_node):
+		marcus_character_node.visible = false
+		marcus_character_node.park()
+
+	crusade_timer = CRUSADE_TIME
+	crusade_selector_row.visible = false
+	if crusade_bring_marcus_btn != null:
+		crusade_bring_marcus_btn.visible = false
+	crusade_progress_container.visible = true
+	_update_crusade_ui()
+
+
+func _update_crusade_ui():
+	var mins: int = int(crusade_timer / 60.0)
+	var secs: int = int(crusade_timer) % 60
+	crusade_timer_label.text = "Crusading... %d:%02d remaining" % [mins, secs]
+	var fill: float = 1.0 - (crusade_timer / CRUSADE_TIME)
+	crusade_bar.anchor_right = fill
+	if crusade_rush_btn != null:
+		crusade_rush_btn.disabled = faith < 1
+
+
+func _on_crusade_rush_pressed():
+	if faith < 1:
+		return
+	faith -= 1
+	crusade_timer = max(0.0, crusade_timer - 600.0)
+	if crusade_timer <= 0.0:
+		_complete_crusade()
+	else:
+		_update_crusade_ui()
+	_refresh_resource_labels()
+
+
+func _complete_crusade():
+	crusading = false
+	crusade_progress_container.visible = false
+	crusade_go_btn.visible = true
+
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	# Marcus bonus: lower death rate + better boxes
+	var death_rate := 0.05 if marcus_leading_crusade else 0.15
+
+	# Soldier casualties
+	var survivors: int = 0
+	for i in range(crusade_sent):
+		if rng.randf() > death_rate:
+			survivors += 1
+	var fallen: int = crusade_sent - survivors
+	soldiers_in_garrison += survivors
+
+	# Return surviving soldiers visually
+	var returned: int = 0
+	for sol in crusading_nodes:
+		if is_instance_valid(sol):
+			if returned < survivors:
+				sol.visible = true
+				if garrison != null:
+					sol.start_wandering(garrison.position + Vector2(rng.randf_range(-35, 35), rng.randf_range(-18, 18)))
+				returned += 1
+	crusading_nodes.clear()
+	garrison_soldier_label.text = "%d / 5" % soldiers_in_garrison
+
+	# Roll one treasure box per soldier sent
+	var boxes: Array = []
+	var total_gold: int = 0
+	var total_faith: int = 0
+	var got_marcus: bool = false
+
+	for i in range(crusade_sent):
+		var box: Dictionary = _roll_box(rng)
+		# Marcus leadership bonus: upgrade each box one rarity tier
+		if marcus_leading_crusade:
+			box = _upgrade_box_rarity(box, rng)
+		boxes.append(box)
+		total_gold  += box.gold
+		total_faith += box.faith
+		if not marcus_obtained and (true or rng.randf() < box.hero_chance):  # DEBUG: always drop on first crusade
+			got_marcus = true
+
+	if got_marcus:
+		marcus_obtained = true
+
+	# Return Marcus to his quarters
+	if marcus_leading_crusade:
+		marcus_leading_crusade = false
+		if is_instance_valid(marcus_character_node) and generals_quarters != null:
+			marcus_character_node.visible = true
+			marcus_character_node.start_wandering(generals_quarters.position + Vector2(0, 20))
+
+	# Store results for phase 2 (opened after player taps chests)
+	crusade_pending = {
+		"fallen": fallen,
+		"gold": total_gold,
+		"faith": total_faith,
+		"got_marcus": got_marcus,
+		"boxes": boxes
+	}
+
+	# Populate chest boxes in phase 1
+	for child in crusade_chests_row.get_children():
+		child.queue_free()
+	var display_boxes: Array = boxes
+	for box_data in display_boxes:
+		_add_chest_box(crusade_chests_row, box_data.rarity)
+
+	# Soldier info label
+	if fallen > 0:
+		var sf := "s" if fallen != 1 else ""
+		crusade_result_label.text = "%d soldier%s fell in battle." % [fallen, sf]
+	else:
+		crusade_result_label.text = "All soldiers returned safely!"
+
+	crusade_result_title.text = "The Crusade Returns!" if not marcus_leading_crusade else "Marcus Leads a Victory!"
+	crusade_phase1.visible = true
+	crusade_phase2.visible = false
+	crusade_result_popup.visible = true
+
+
+func _roll_box(rng: RandomNumberGenerator) -> Dictionary:
+	var roll: float = rng.randf()
+	var rarity: String
+	if roll < 0.01:
+		rarity = "Legendary"
+	elif roll < 0.07:
+		rarity = "Epic"
+	elif roll < 0.20:
+		rarity = "Rare"
+	elif roll < 0.45:
+		rarity = "Uncommon"
+	else:
+		rarity = "Common"
+
+	var gold_reward: int
+	var faith_reward: int
+	var hero_chance: float
+
+	match rarity:
+		"Common":
+			gold_reward  = rng.randi_range(50,  100)
+			faith_reward = rng.randi_range(5,   10)
+			hero_chance  = 0.02
+		"Uncommon":
+			gold_reward  = rng.randi_range(100, 200)
+			faith_reward = rng.randi_range(10,  20)
+			hero_chance  = 0.05
+		"Rare":
+			gold_reward  = rng.randi_range(200, 400)
+			faith_reward = rng.randi_range(20,  40)
+			hero_chance  = 0.10
+		"Epic":
+			gold_reward  = rng.randi_range(400, 800)
+			faith_reward = rng.randi_range(40,  80)
+			hero_chance  = 0.20
+		"Legendary":
+			gold_reward  = rng.randi_range(800, 1500)
+			faith_reward = rng.randi_range(80,  150)
+			hero_chance  = 0.50
+		_:
+			gold_reward  = 50
+			faith_reward = 5
+			hero_chance  = 0.02
+
+	return {"rarity": rarity, "gold": gold_reward, "faith": faith_reward, "hero_chance": hero_chance}
+
+
+func _upgrade_box_rarity(box: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	# Marcus leadership bonus: upgrade rarity one tier, boost rewards accordingly
+	const TIERS := ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
+	var idx: int = TIERS.find(box.rarity)
+	if idx < 0 or idx >= TIERS.size() - 1:
+		return box   # already Legendary, no change
+	var new_rarity: String = TIERS[idx + 1]
+	# Re-roll rewards at the higher tier
+	var upgraded: Dictionary = _roll_box(rng)
+	upgraded["rarity"] = new_rarity
+	# Keep at least the original gold/faith as a floor
+	upgraded["gold"]  = maxi(upgraded.gold,  box.gold)
+	upgraded["faith"] = maxi(upgraded.faith, box.faith)
+	return upgraded
+
+
+func _rarity_color(rarity: String) -> Color:
+	match rarity:
+		"Common":    return Color(0.55, 0.55, 0.55)
+		"Uncommon":  return Color(0.20, 0.75, 0.20)
+		"Rare":      return Color(0.25, 0.50, 1.00)
+		"Epic":      return Color(0.65, 0.20, 0.90)
+		"Legendary": return Color(0.95, 0.65, 0.05)
+	return Color(0.55, 0.55, 0.55)
+
+
+func _add_chest_box(row: HBoxContainer, rarity: String):
+	var col := _rarity_color(rarity)
+	var box := PanelContainer.new()
+	box.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	box.custom_minimum_size = Vector2(68, 88)
+	var bstyle := StyleBoxFlat.new()
+	bstyle.bg_color = col.darkened(0.55)
+	bstyle.border_color = col
+	bstyle.set_border_width_all(2)
+	bstyle.set_corner_radius_all(6)
+	bstyle.content_margin_left   = 4
+	bstyle.content_margin_right  = 4
+	bstyle.content_margin_top    = 4
+	bstyle.content_margin_bottom = 4
+	box.add_theme_stylebox_override("panel", bstyle)
+	row.add_child(box)
+
+	var inner := VBoxContainer.new()
+	inner.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	inner.add_theme_constant_override("separation", 2)
+	inner.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(inner)
+
+	var chest_lbl := Label.new()
+	chest_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	chest_lbl.text = "CHEST"
+	chest_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chest_lbl.add_theme_font_size_override("font_size", 9)
+	chest_lbl.add_theme_color_override("font_color", col.lightened(0.3))
+	inner.add_child(chest_lbl)
+
+	# Draw a simple chest icon using nested ColorRects
+	var chest_body := ColorRect.new()
+	chest_body.color = col.darkened(0.2)
+	chest_body.custom_minimum_size = Vector2(36, 22)
+	chest_body.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	inner.add_child(chest_body)
+
+	var lock := ColorRect.new()
+	lock.color = col.lightened(0.2)
+	lock.custom_minimum_size = Vector2(10, 10)
+	lock.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	inner.add_child(lock)
+
+	var rar_lbl := Label.new()
+	rar_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	rar_lbl.text = rarity
+	rar_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rar_lbl.add_theme_font_size_override("font_size", 9)
+	rar_lbl.add_theme_color_override("font_color", col)
+	inner.add_child(rar_lbl)
+
+
+func _on_open_chests_pressed():
+	var p: Dictionary = crusade_pending
+	var g: int = p.get("gold", 0)
+	var f: int = p.get("faith", 0)
+	var got_marcus: bool = p.get("got_marcus", false)
+
+	gold  += g
+	faith += f
+	_refresh_resource_labels()
+
+	crusade_rewards_label.text = "+%d Gold     +%d Faith" % [g, f]
+
+	# Show Marcus card if obtained this run
+	crusade_marcus_container.visible = got_marcus
+
+	crusade_phase1.visible = false
+	crusade_phase2.visible = true
+
+	# Unlock General's Quarters in build menu and show Hero Deck chip
+	if marcus_obtained:
+		if generals_quarters_build_row != null:
+			generals_quarters_build_row.visible = true
+		if generals_quarters_sep != null:
+			generals_quarters_sep.visible = true
+		if hero_deck_chip != null:
+			hero_deck_chip.visible = true
+
+
+func _on_crusade_dismiss_pressed():
+	crusade_result_popup.visible = false
+
+
+# ── Crusade result popup ───────────────────────────────────────────────────────
+
+func _build_crusade_result_popup(ui: CanvasLayer):
+	var overlay := ColorRect.new()
+	overlay.color = Color(0, 0, 0, 0.70)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.visible = false
+	ui.add_child(overlay)
+	crusade_result_popup = overlay
+
+	# CenterContainer auto-centers panel on screen regardless of content size
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_PASS
+	overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	panel.custom_minimum_size = Vector2(360, 0)   # fixed width, height follows content
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.10, 0.05, 0.05)
+	ps.border_color = Color(0.75, 0.22, 0.14)
+	ps.set_border_width_all(2)
+	ps.set_corner_radius_all(10)
+	ps.content_margin_left   = 20
+	ps.content_margin_right  = 20
+	ps.content_margin_top    = 16
+	ps.content_margin_bottom = 16
+	panel.add_theme_stylebox_override("panel", ps)
+	center.add_child(panel)
+
+	var vb := VBoxContainer.new()
+	vb.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	vb.add_theme_constant_override("separation", 10)
+	panel.add_child(vb)
+
+	# Title
+	crusade_result_title = Label.new()
+	crusade_result_title.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crusade_result_title.add_theme_font_size_override("font_size", 18)
+	crusade_result_title.add_theme_color_override("font_color", Color(0.95, 0.55, 0.15))
+	vb.add_child(crusade_result_title)
+
+	# Soldier info (shared between phases)
+	crusade_result_label = Label.new()
+	crusade_result_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crusade_result_label.add_theme_font_size_override("font_size", 13)
+	crusade_result_label.add_theme_color_override("font_color", Color(0.92, 0.90, 0.98))
+	vb.add_child(crusade_result_label)
+
+	# ── PHASE 1: closed chests ────────────────────────────────────────────────
+	crusade_phase1 = VBoxContainer.new()
+	crusade_phase1.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_phase1.add_theme_constant_override("separation", 10)
+	vb.add_child(crusade_phase1)
+
+	var tap_lbl := Label.new()
+	tap_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	tap_lbl.text = "Your crusade brought back treasures!"
+	tap_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tap_lbl.add_theme_font_size_override("font_size", 13)
+	tap_lbl.add_theme_color_override("font_color", Color(0.85, 0.82, 0.65))
+	crusade_phase1.add_child(tap_lbl)
+
+	var scroll := ScrollContainer.new()
+	scroll.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(0, 100)
+	crusade_phase1.add_child(scroll)
+
+	crusade_chests_row = HBoxContainer.new()
+	crusade_chests_row.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_chests_row.add_theme_constant_override("separation", 8)
+	crusade_chests_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	scroll.add_child(crusade_chests_row)
+
+	var open_btn := Button.new()
+	open_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	open_btn.text = "Open Chests!"
+	open_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_action_btn(open_btn, Color(0.75, 0.55, 0.05))
+	open_btn.pressed.connect(_on_open_chests_pressed)
+	crusade_phase1.add_child(open_btn)
+
+	# ── PHASE 2: rewards + Marcus card ───────────────────────────────────────
+	crusade_phase2 = VBoxContainer.new()
+	crusade_phase2.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_phase2.add_theme_constant_override("separation", 10)
+	crusade_phase2.visible = false
+	vb.add_child(crusade_phase2)
+
+	crusade_rewards_label = Label.new()
+	crusade_rewards_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_rewards_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crusade_rewards_label.add_theme_font_size_override("font_size", 16)
+	crusade_rewards_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.25))
+	crusade_phase2.add_child(crusade_rewards_label)
+
+	# Marcus card reveal (hidden until he drops)
+	crusade_marcus_container = VBoxContainer.new()
+	crusade_marcus_container.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	crusade_marcus_container.add_theme_constant_override("separation", 8)
+	crusade_marcus_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	crusade_marcus_container.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	crusade_marcus_container.visible = false
+	crusade_phase2.add_child(crusade_marcus_container)
+
+	var hero_lbl := Label.new()
+	hero_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	hero_lbl.text = "NEW HERO OBTAINED!"
+	hero_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hero_lbl.add_theme_font_size_override("font_size", 15)
+	hero_lbl.add_theme_color_override("font_color", Color(0.98, 0.88, 0.20))
+	crusade_marcus_container.add_child(hero_lbl)
+
+	var marcus_tex: Texture2D = load("res://Marcus.png")
+	if marcus_tex != null:
+		# EXPAND_IGNORE_SIZE + SIZE_SHRINK_CENTER = locked to custom_minimum_size, never expands
+		var card_img := TextureRect.new()
+		card_img.layout_direction  = Control.LAYOUT_DIRECTION_LTR
+		card_img.texture           = marcus_tex
+		card_img.expand_mode       = TextureRect.EXPAND_IGNORE_SIZE
+		card_img.stretch_mode      = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		card_img.custom_minimum_size   = Vector2(180, 240)
+		card_img.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		card_img.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+		crusade_marcus_container.add_child(card_img)
+
+	var dismiss_btn := Button.new()
+	dismiss_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	dismiss_btn.text = "For Glory!"
+	dismiss_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_action_btn(dismiss_btn, Color(0.75, 0.22, 0.14))
+	dismiss_btn.pressed.connect(_on_crusade_dismiss_pressed)
+	crusade_phase2.add_child(dismiss_btn)
+	crusade_dismiss_btn = dismiss_btn
+
+
+# ── Hero Deck panel ────────────────────────────────────────────────────────────
+
+func _build_hero_deck_panel(ui: CanvasLayer):
+	hero_deck_panel = PanelContainer.new()
+	hero_deck_panel.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	hero_deck_panel.anchor_left   = 0.0
+	hero_deck_panel.anchor_right  = 0.0
+	hero_deck_panel.anchor_top    = 0.0
+	hero_deck_panel.anchor_bottom = 0.0
+	hero_deck_panel.offset_left   = 8
+	hero_deck_panel.offset_right  = 370
+	hero_deck_panel.offset_top    = 62
+	hero_deck_panel.offset_bottom = 560
+	hero_deck_panel.visible       = false
+	var pstyle := StyleBoxFlat.new()
+	pstyle.bg_color = Color(0.07, 0.05, 0.10, 0.97)
+	pstyle.border_color = Color(0.80, 0.55, 0.10)
+	pstyle.set_border_width_all(2)
+	pstyle.set_corner_radius_all(8)
+	pstyle.content_margin_left   = 12
+	pstyle.content_margin_right  = 12
+	pstyle.content_margin_top    = 10
+	pstyle.content_margin_bottom = 10
+	hero_deck_panel.add_theme_stylebox_override("panel", pstyle)
+	ui.add_child(hero_deck_panel)
+
+	var vb := VBoxContainer.new()
+	vb.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	vb.add_theme_constant_override("separation", 10)
+	hero_deck_panel.add_child(vb)
+
+	var title_row := HBoxContainer.new()
+	title_row.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	vb.add_child(title_row)
+
+	var title := Label.new()
+	title.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	title.text = "Hero Deck"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_color_override("font_color", Color(0.98, 0.88, 0.30))
+	title_row.add_child(title)
+
+	var close := Button.new()
+	close.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	close.text = "X"
+	close.custom_minimum_size = Vector2(36, 36)
+	close.add_theme_font_size_override("font_size", 16)
+	close.pressed.connect(func(): hero_deck_panel.visible = false)
+	title_row.add_child(close)
+
+	var marcus_tex: Texture2D = load("res://Marcus.png")
+	if marcus_tex != null:
+		var card_img := TextureRect.new()
+		card_img.layout_direction      = Control.LAYOUT_DIRECTION_LTR
+		card_img.texture               = marcus_tex
+		card_img.expand_mode           = TextureRect.EXPAND_IGNORE_SIZE
+		card_img.stretch_mode          = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		card_img.custom_minimum_size   = Vector2(200, 268)
+		card_img.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		card_img.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+		vb.add_child(card_img)
+
+	var marcus_desc := Label.new()
+	marcus_desc.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	marcus_desc.text = "Military General  |  Common\nBoosts crusade success in battle."
+	marcus_desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	marcus_desc.add_theme_font_size_override("font_size", 12)
+	marcus_desc.add_theme_color_override("font_color", Color(0.75, 0.70, 0.65))
+	vb.add_child(marcus_desc)
+
+
+func _on_hero_deck_chip_input(event: InputEvent):
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		hero_deck_panel.visible = not hero_deck_panel.visible

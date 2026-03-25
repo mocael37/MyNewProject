@@ -8,6 +8,16 @@ signal tapped
 
 const OUTLINE := Color(0.10, 0.05, 0.02, 1.0)
 
+# Sprite2D used for PNG-based buildings (handles alpha correctly)
+var _sprite: Sprite2D = null
+
+# Map building type → texture path for PNG buildings
+const PNG_BUILDINGS := {
+	"temple":             "res://Temple.png",
+	"generals_quarters":  "res://Marcus Habitat.png",
+	"shelter":            "res://Beliver shelter.png",
+}
+
 func _ready():
 	input_pickable = true
 	var shape = CollisionShape2D.new()
@@ -17,6 +27,25 @@ func _ready():
 	shape.shape = rect
 	add_child(shape)
 	input_event.connect(_on_input_event)
+	_setup_png_sprite()
+
+func _setup_png_sprite():
+	if not PNG_BUILDINGS.has(building_type):
+		return
+	var tex: Texture2D = load(PNG_BUILDINGS[building_type])
+	if tex == null:
+		return
+	_sprite = Sprite2D.new()
+	_sprite.texture = tex
+	# Scale so the building is 140px wide
+	var target_w := 140.0
+	var sc := target_w / float(tex.get_width())
+	_sprite.scale = Vector2(sc, sc)
+	# Anchor base of sprite to node origin
+	var scaled_h := float(tex.get_height()) * sc
+	_sprite.position = Vector2(0, -scaled_h * 0.5 + 18.0)
+	_sprite.visible = not has_meta("under_construction")
+	add_child(_sprite)
 
 func _on_input_event(_viewport, event, _shape_idx):
 	if is_interactive and event is InputEventMouseButton:
@@ -24,34 +53,39 @@ func _on_input_event(_viewport, event, _shape_idx):
 			tapped.emit()
 
 func _draw():
+	var under_construction: bool = has_meta("under_construction")
+
+	# PNG buildings use a Sprite2D child — show/hide it based on construction state
+	if _sprite != null:
+		_sprite.visible = not under_construction
+		if under_construction:
+			_draw_temple_construction()
+		return
+
+	# Procedural buildings
 	match building_type:
 		"shelter":
-			if has_meta("under_construction"):
+			if under_construction:
 				_draw_temple_construction()
 			else:
 				_draw_shelter()
-		"temple":
-			if has_meta("under_construction"):
-				_draw_temple_construction()
-			else:
-				_draw_temple()
 		"hall_of_devoted":
-			if has_meta("under_construction"):
+			if under_construction:
 				_draw_temple_construction()
 			else:
 				_draw_hall_of_devoted()
 		"preacher_shelter":
-			if has_meta("under_construction"):
+			if under_construction:
 				_draw_temple_construction()
 			else:
 				_draw_preacher_shelter()
 		"armory":
-			if has_meta("under_construction"):
+			if under_construction:
 				_draw_temple_construction()
 			else:
 				_draw_armory()
 		"garrison":
-			if has_meta("under_construction"):
+			if under_construction:
 				_draw_temple_construction()
 			else:
 				_draw_garrison()
@@ -145,56 +179,7 @@ func _draw_shelter():
 	_draw_window(20, -22)
 
 
-# ── Small Temple ───────────────────────────────────────────────────────────────
-func _draw_temple():
-	const STONE  := Color(0.92, 0.90, 0.84)
-	const STONE2 := Color(0.82, 0.80, 0.74)
-	const PILLAR := Color(0.97, 0.95, 0.90)
-	const ROOF_T := Color(0.78, 0.75, 0.68)
-
-	# Ground shadow
-	draw_colored_polygon(_ellipse_pts(Vector2(6, 24), 66, 10, 14), Color(0,0,0,0.20))
-
-	# Fake 3D side
-	draw_colored_polygon(
-		PackedVector2Array([Vector2(40,4), Vector2(56,-4), Vector2(56,-50), Vector2(40,-50)]),
-		STONE.darkened(0.30))
-	draw_polyline(
-		PackedVector2Array([Vector2(40,4), Vector2(56,-4), Vector2(56,-50), Vector2(40,-50)]),
-		OUTLINE, 2)
-
-	# Steps
-	_o_rect(Rect2(-60, 10, 120, 12), STONE2)
-	_o_rect(Rect2(-50, 0, 100, 12), STONE)
-
-	# Main body
-	_o_rect(Rect2(-40, -50, 80, 52), STONE)
-	# Stone block grid
-	for row in range(3):
-		draw_line(Vector2(-40,-30+row*16), Vector2(40,-30+row*16), STONE2, 1)
-	for col in range(3):
-		draw_line(Vector2(-20+col*20,-50), Vector2(-20+col*20,2), STONE2, 1)
-
-	# Columns
-	for i in range(4):
-		var cx := -28.0 + i * 19
-		_o_rect(Rect2(cx-5,-50,10,52), PILLAR, 1.5)
-		_o_rect(Rect2(cx-7,-50,14,6), STONE2, 1.5)   # capital
-		_o_rect(Rect2(cx-7, 0,14,4), STONE2, 1.5)   # base
-
-	# Pediment
-	_o_poly(PackedVector2Array([Vector2(-46,-50), Vector2(46,-50), Vector2(0,-86)]), ROOF_T, 3)
-	draw_line(Vector2(-46,-50), Vector2(46,-50), OUTLINE, 2)
-
-	# Door arch
-	_o_rect(Rect2(-14,-22,28,34), Color(0.28,0.20,0.14))
-	_o_poly(PackedVector2Array([
-		Vector2(-14,-22), Vector2(14,-22),
-		Vector2(14,-30), Vector2(0,-38), Vector2(-14,-30)]),
-		Color(0.28,0.20,0.14), 2)
-
-	# God symbol at peak
-	_draw_god_symbol(0, -76)
+# ── Small Temple — rendered via Sprite2D (see _setup_png_sprite) ───────────────
 
 
 func _draw_temple_construction():
@@ -561,3 +546,6 @@ func _draw_wave_symbol(cx: float, cy: float):
 	bot_i.append(Vector2(cx + 8, cy + 11))
 	bot_i.append(Vector2(cx - 8, cy + 11))
 	draw_colored_polygon(bot_i, WAVE_L)
+
+
+# General's Quarters — rendered via Sprite2D (see _setup_png_sprite)
