@@ -174,6 +174,7 @@ var crusade_result_label: Label = null   # soldier casualty line
 var crusade_phase1: Control = null       # chests view
 var crusade_phase2: Control = null       # rewards view
 var crusade_chests_row: HBoxContainer = null
+var crusade_chest_images: Array = []   # TextureRect refs for open animation
 var crusade_rewards_label: Label = null
 var crusade_marcus_container: Control = null
 var crusade_dismiss_btn: Button = null
@@ -3697,6 +3698,7 @@ func _complete_crusade():
 	# Populate chest boxes in phase 1
 	for child in crusade_chests_row.get_children():
 		child.queue_free()
+	crusade_chest_images.clear()
 	var display_boxes: Array = boxes
 	for box_data in display_boxes:
 		_add_chest_box(crusade_chests_row, box_data.rarity)
@@ -3789,83 +3791,84 @@ func _rarity_color(rarity: String) -> Color:
 
 func _add_chest_box(row: HBoxContainer, rarity: String):
 	var col := _rarity_color(rarity)
-	var box := PanelContainer.new()
-	box.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	box.custom_minimum_size = Vector2(68, 88)
-	var bstyle := StyleBoxFlat.new()
-	bstyle.bg_color = col.darkened(0.55)
-	bstyle.border_color = col
-	bstyle.set_border_width_all(2)
-	bstyle.set_corner_radius_all(6)
-	bstyle.content_margin_left   = 4
-	bstyle.content_margin_right  = 4
-	bstyle.content_margin_top    = 4
-	bstyle.content_margin_bottom = 4
-	box.add_theme_stylebox_override("panel", bstyle)
-	row.add_child(box)
 
 	var inner := VBoxContainer.new()
 	inner.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	inner.add_theme_constant_override("separation", 2)
+	inner.add_theme_constant_override("separation", 4)
 	inner.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(inner)
+	inner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	row.add_child(inner)
 
-	var chest_lbl := Label.new()
-	chest_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	chest_lbl.text = "CHEST"
-	chest_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	chest_lbl.add_theme_font_size_override("font_size", 9)
-	chest_lbl.add_theme_color_override("font_color", col.lightened(0.3))
-	inner.add_child(chest_lbl)
-
-	# Draw a simple chest icon using nested ColorRects
-	var chest_body := ColorRect.new()
-	chest_body.color = col.darkened(0.2)
-	chest_body.custom_minimum_size = Vector2(36, 22)
-	chest_body.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	inner.add_child(chest_body)
-
-	var lock := ColorRect.new()
-	lock.color = col.lightened(0.2)
-	lock.custom_minimum_size = Vector2(10, 10)
-	lock.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	inner.add_child(lock)
+	# Chest image
+	var chest_tex: Texture2D = load("res://Treasure box.png")
+	var img := TextureRect.new()
+	img.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	img.texture = chest_tex
+	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	img.custom_minimum_size = Vector2(220, 220)
+	img.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	img.modulate = col.lightened(0.15) if rarity != "Common" else Color.WHITE
+	inner.add_child(img)
+	crusade_chest_images.append(img)
 
 	var rar_lbl := Label.new()
 	rar_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	rar_lbl.text = rarity
 	rar_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	rar_lbl.add_theme_font_size_override("font_size", 9)
+	rar_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rar_lbl.add_theme_font_size_override("font_size", 14)
 	rar_lbl.add_theme_color_override("font_color", col)
 	inner.add_child(rar_lbl)
 
 
 func _on_open_chests_pressed():
-	var p: Dictionary = crusade_pending
-	var g: int = p.get("gold", 0)
-	var f: int = p.get("faith", 0)
-	var got_marcus: bool = p.get("got_marcus", false)
+	var open_tex: Texture2D = load("res://Open Treasure Box.png")
+	var total: int = crusade_chest_images.size()
 
-	gold  += g
-	faith += f
-	_refresh_resource_labels()
+	# Animate each chest opening one by one with a small bounce
+	for i in total:
+		var img: TextureRect = crusade_chest_images[i]
+		var delay: float = i * 0.18
+		# Scale up (bounce) then swap to open texture
+		var tw: Tween = create_tween()
+		tw.tween_interval(delay)
+		tw.tween_property(img, "scale", Vector2(1.25, 1.25), 0.10)
+		tw.tween_callback(func():
+			img.texture = open_tex
+			img.modulate = Color.WHITE
+		)
+		tw.tween_property(img, "scale", Vector2(1.0, 1.0), 0.12)
 
-	crusade_rewards_label.text = "+%d Gold     +%d Faith" % [g, f]
+	# After all chests have animated, switch to Phase 2
+	var switch_delay: float = total * 0.18 + 0.45
+	var sw: Tween = create_tween()
+	sw.tween_interval(switch_delay)
+	sw.tween_callback(func():
+		var p: Dictionary = crusade_pending
+		var g: int = p.get("gold", 0)
+		var f: int = p.get("faith", 0)
+		var got_marcus: bool = p.get("got_marcus", false)
 
-	# Show Marcus card if obtained this run
-	crusade_marcus_container.visible = got_marcus
+		gold  += g
+		faith += f
+		_refresh_resource_labels()
 
-	crusade_phase1.visible = false
-	crusade_phase2.visible = true
+		crusade_rewards_label.text = "+%d Gold     +%d Faith" % [g, f]
+		crusade_marcus_container.visible = got_marcus
 
-	# Unlock General's Quarters in build menu and show Hero Deck chip
-	if marcus_obtained:
-		if generals_quarters_build_row != null:
-			generals_quarters_build_row.visible = true
-		if generals_quarters_sep != null:
-			generals_quarters_sep.visible = true
-		if hero_deck_chip != null:
-			hero_deck_chip.visible = true
+		crusade_phase1.visible = false
+		crusade_phase2.visible = true
+
+		# Unlock General's Quarters in build menu and show Hero Deck chip
+		if marcus_obtained:
+			if generals_quarters_build_row != null:
+				generals_quarters_build_row.visible = true
+			if generals_quarters_sep != null:
+				generals_quarters_sep.visible = true
+			if hero_deck_chip != null:
+				hero_deck_chip.visible = true
+	)
 
 
 func _on_crusade_dismiss_pressed():
@@ -3942,13 +3945,15 @@ func _build_crusade_result_popup(ui: CanvasLayer):
 	var scroll := ScrollContainer.new()
 	scroll.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.custom_minimum_size = Vector2(0, 100)
+	scroll.custom_minimum_size = Vector2(0, 260)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	crusade_phase1.add_child(scroll)
 
 	crusade_chests_row = HBoxContainer.new()
 	crusade_chests_row.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	crusade_chests_row.add_theme_constant_override("separation", 8)
+	crusade_chests_row.add_theme_constant_override("separation", 16)
 	crusade_chests_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	crusade_chests_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(crusade_chests_row)
 
 	var open_btn := Button.new()
