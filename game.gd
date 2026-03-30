@@ -125,6 +125,10 @@ const PRAYER_TIME := 1800.0
 # ── Tutorial ─────────────────────────────────────────────────────────────────
 enum TutStep { INTRO, BUILD_TEMPLE, PLACE_TEMPLE, RUSH_PROMPT, TEMPLE_COMPLETE, TAP_SHELTER, TAP_GO_PRAY, CHOOSE_BELIEVERS, COMPLETE, WHEEL_HINT, DONE }
 var tut_step := TutStep.INTRO
+var tut_popup_dismissed: bool = false
+var tutorial_overlay: ColorRect = null
+var tutorial_popup: PanelContainer = null
+var tutorial_popup_text: Label = null
 
 # ── Resources ────────────────────────────────────────────────────────────────
 var preachers_count: int = 0
@@ -732,6 +736,7 @@ func _on_believer_shelter_tapped():
 			_reset_prayer_ui()
 		if tut_step == TutStep.TAP_SHELTER:
 			tut_step = TutStep.TAP_GO_PRAY
+			tut_popup_dismissed = false
 			_update_tutorial()
 
 
@@ -1649,6 +1654,7 @@ func _on_go_pray_pressed():
 	pray_selector_row.visible = true
 	if tut_step == TutStep.TAP_GO_PRAY:
 		tut_step = TutStep.CHOOSE_BELIEVERS
+		tut_popup_dismissed = true
 		_update_tutorial()
 
 
@@ -1662,6 +1668,7 @@ func _on_pray_confirm_pressed():
 		pray_selector_row, pray_progress_container, pray_go_btn)
 	if tut_step == TutStep.CHOOSE_BELIEVERS:
 		tut_step = TutStep.COMPLETE
+		tut_popup_dismissed = false
 		_update_tutorial()
 
 func _start_prayer_session(shelter_idx: int, home_pos: Vector2, wanted: int,
@@ -2043,34 +2050,93 @@ func _build_garrison_panel(ui: CanvasLayer):
 
 
 func _build_tutorial_panel(ui: CanvasLayer):
-	tutorial_panel = PanelContainer.new()
-	tutorial_panel.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	tutorial_panel.anchor_left   = 0.0
-	tutorial_panel.anchor_right  = 1.0
-	tutorial_panel.anchor_top    = 1.0
-	tutorial_panel.anchor_bottom = 1.0
-	tutorial_panel.offset_left   = 8
-	tutorial_panel.offset_right  = -140
-	tutorial_panel.offset_top    = -54
-	tutorial_panel.offset_bottom = -4
-	ui.add_child(tutorial_panel)
+	# Full-screen overlay — blocks input while popup is showing
+	tutorial_overlay = ColorRect.new()
+	tutorial_overlay.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	tutorial_overlay.anchor_left   = 0.0
+	tutorial_overlay.anchor_right  = 1.0
+	tutorial_overlay.anchor_top    = 0.0
+	tutorial_overlay.anchor_bottom = 1.0
+	tutorial_overlay.color = Color(0.0, 0.0, 0.0, 0.55)
+	tutorial_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	tutorial_overlay.visible = false
+	ui.add_child(tutorial_overlay)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	tutorial_panel.add_child(hbox)
+	# Centered popup card (DragonVale style)
+	tutorial_popup = PanelContainer.new()
+	tutorial_popup.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	tutorial_popup.anchor_left   = 0.5
+	tutorial_popup.anchor_right  = 0.5
+	tutorial_popup.anchor_top    = 0.5
+	tutorial_popup.anchor_bottom = 0.5
+	tutorial_popup.offset_left   = -235
+	tutorial_popup.offset_right  = 235
+	tutorial_popup.offset_top    = -115
+	tutorial_popup.offset_bottom = 115
+	var _popup_style := StyleBoxFlat.new()
+	_popup_style.bg_color = Color(0.08, 0.06, 0.16, 0.97)
+	_popup_style.border_color = Color(0.85, 0.68, 0.15)
+	_popup_style.set_border_width_all(3)
+	_popup_style.set_corner_radius_all(12)
+	_popup_style.content_margin_left   = 14
+	_popup_style.content_margin_right  = 14
+	_popup_style.content_margin_top    = 12
+	_popup_style.content_margin_bottom = 12
+	tutorial_popup.add_theme_stylebox_override("panel", _popup_style)
+	tutorial_popup.visible = false
+	ui.add_child(tutorial_popup)
 
-	tutorial_label = Label.new()
-	tutorial_label.text                  = ""
-	tutorial_label.vertical_alignment    = VERTICAL_ALIGNMENT_CENTER
-	tutorial_label.add_theme_font_size_override("font_size", 15)
-	tutorial_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hbox.add_child(tutorial_label)
+	var _hbox := HBoxContainer.new()
+	_hbox.add_theme_constant_override("separation", 14)
+	tutorial_popup.add_child(_hbox)
 
-	tutorial_next_btn = Button.new()
-	tutorial_next_btn.text                 = "Next  →"
-	tutorial_next_btn.custom_minimum_size  = Vector2(100, 40)
-	tutorial_next_btn.pressed.connect(_on_tutorial_next)
-	hbox.add_child(tutorial_next_btn)
+	# Leader portrait on the left
+	var _portrait := TextureRect.new()
+	_portrait.custom_minimum_size = Vector2(100, 150)
+	_portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var _portrait_path: String
+	match GameData.selected_leader:
+		0: _portrait_path = "res://High Priest.png"
+		1: _portrait_path = "res://Prophet of Wealth.png"
+		2: _portrait_path = "res://Holy General.png"
+		_: _portrait_path = "res://High Priest.png"
+	_portrait.texture = load(_portrait_path)
+	_hbox.add_child(_portrait)
+
+	# Right side: leader name + speech text + OK button
+	var _vbox := VBoxContainer.new()
+	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_vbox.add_theme_constant_override("separation", 8)
+	_hbox.add_child(_vbox)
+
+	var _name_lbl := Label.new()
+	_name_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	_name_lbl.text = GameData.leader_name
+	_name_lbl.add_theme_font_size_override("font_size", 17)
+	_name_lbl.add_theme_color_override("font_color", Color(0.95, 0.80, 0.25))
+	_vbox.add_child(_name_lbl)
+
+	tutorial_popup_text = Label.new()
+	tutorial_popup_text.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	tutorial_popup_text.text = ""
+	tutorial_popup_text.add_theme_font_size_override("font_size", 14)
+	tutorial_popup_text.add_theme_color_override("font_color", Color(0.92, 0.92, 0.92))
+	tutorial_popup_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tutorial_popup_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_vbox.add_child(tutorial_popup_text)
+
+	var _btn_row := HBoxContainer.new()
+	_btn_row.alignment = BoxContainer.ALIGNMENT_END
+	_vbox.add_child(_btn_row)
+
+	var _ok_btn := Button.new()
+	_ok_btn.text = "OK"
+	_ok_btn.custom_minimum_size = Vector2(80, 36)
+	_ok_btn.pressed.connect(_on_tutorial_popup_ok)
+	_btn_row.add_child(_ok_btn)
+
+	# ── Arrow hints (shown after popup is dismissed) ──────────────────────────
 
 	# Floating badge that tracks the Humble Shelter on the map (TAP_SHELTER step)
 	shelter_arrow = PanelContainer.new()
@@ -2218,7 +2284,7 @@ func _update_construction_ui():
 	construction_bar.anchor_right = progress
 
 	# Pulse rush button during RUSH_PROMPT tutorial step
-	if tut_step == TutStep.RUSH_PROMPT and faith >= 1:
+	if tut_step == TutStep.RUSH_PROMPT and faith >= 1 and tut_popup_dismissed:
 		rush_pulse += get_process_delta_time() * 3.0
 		var t := (sin(rush_pulse) + 1.0) * 0.5
 		rush_button.modulate = Color(1.0, lerp(0.65, 1.0, t), lerp(0.20, 0.65, t))
@@ -2242,84 +2308,77 @@ func _update_conversion_ui():
 
 # ── Tutorial logic ────────────────────────────────────────────────────────────
 func _update_tutorial():
-	# Manage all arrow visibility centrally
+	var popup_showing: bool = !tut_popup_dismissed and tut_step != TutStep.DONE
+
+	if tutorial_overlay:
+		tutorial_overlay.visible = popup_showing
+	if tutorial_popup:
+		tutorial_popup.visible = popup_showing
+		if popup_showing and tutorial_popup_text:
+			tutorial_popup_text.text = _tut_speech(tut_step)
+
+	# Arrows only appear after the popup for that step is dismissed
 	if rush_tutorial_arrow:
-		rush_tutorial_arrow.visible = (tut_step == TutStep.RUSH_PROMPT)
+		rush_tutorial_arrow.visible = tut_popup_dismissed and tut_step == TutStep.RUSH_PROMPT
 	if shelter_arrow:
-		shelter_arrow.visible = (tut_step == TutStep.TAP_SHELTER)
+		shelter_arrow.visible = tut_popup_dismissed and tut_step == TutStep.TAP_SHELTER
 	if pray_tutorial_arrow:
-		pray_tutorial_arrow.visible = (tut_step == TutStep.TAP_GO_PRAY)
+		pray_tutorial_arrow.visible = tut_popup_dismissed and tut_step == TutStep.TAP_GO_PRAY
 	if wheel_tutorial_arrow:
-		wheel_tutorial_arrow.visible = (tut_step == TutStep.WHEEL_HINT)
-		if tut_step == TutStep.WHEEL_HINT and wheel_chip_node != null:
+		wheel_tutorial_arrow.visible = tut_popup_dismissed and tut_step == TutStep.WHEEL_HINT
+		if tut_popup_dismissed and tut_step == TutStep.WHEEL_HINT and wheel_chip_node != null:
 			var chip_pos := wheel_chip_node.global_position
 			wheel_tutorial_arrow.offset_left  = chip_pos.x
 			wheel_tutorial_arrow.offset_right = chip_pos.x + wheel_chip_node.size.x + 20
-
-	match tut_step:
-		TutStep.INTRO:
-			tutorial_label.text = "Welcome! These are your first 5 believers. They live in your Humble Shelter."
-			tutorial_next_btn.visible = true
-			tutorial_next_btn.text = "Next  →"
-
-		TutStep.BUILD_TEMPLE:
-			tutorial_label.text = "Build a Temple so your Believers can pray and earn Faith Points. Tap the Build button  →"
-			tutorial_next_btn.visible = false
-			if temple_build_indicator:
-				temple_build_indicator.visible = true
-
-		TutStep.PLACE_TEMPLE:
-			tutorial_label.text = "Choose where to place your Temple. Click anywhere on the map!"
-			tutorial_next_btn.visible = false
-
-		TutStep.RUSH_PROMPT:
-			tutorial_label.text = "⚡  Each Faith Point skips 10 minutes of construction. You have some — try the Rush button now!"
-			tutorial_next_btn.visible = false
-
-		TutStep.TEMPLE_COMPLETE:
-			tutorial_label.text = "🏛  Temple complete! Your Believers can now pray."
-			tutorial_next_btn.visible = true
-			tutorial_next_btn.text = "Next  →"
-
-		TutStep.TAP_SHELTER:
-			tutorial_label.text = "Now tap your Humble Shelter and send Believers to pray!"
-			tutorial_next_btn.visible = false
-
-		TutStep.TAP_GO_PRAY:
-			tutorial_label.text = "Now tap the 🙏 Go Pray button in the Shelter panel!"
-			tutorial_next_btn.visible = false
-
-		TutStep.CHOOSE_BELIEVERS:
-			tutorial_label.text = "Choose how many Believers to send, then tap Send to Pray!"
-			tutorial_next_btn.visible = false
-
-		TutStep.COMPLETE:
-			tutorial_label.text = "Faith Points let you rush construction and unlock upgrades. Your reign has begun!"
-			tutorial_next_btn.visible = true
-
-		TutStep.WHEEL_HINT:
-			tutorial_label.text = "✦ The Grand Priestess awaits! Tap the Spin chip to receive your first divine miracle."
-			tutorial_next_btn.visible = false
-			tutorial_next_btn.visible = true
-			tutorial_next_btn.text = "Begin  →"
-
-		TutStep.DONE:
-			tutorial_panel.visible = false
+	if temple_build_indicator:
+		temple_build_indicator.visible = tut_popup_dismissed and tut_step == TutStep.BUILD_TEMPLE
 
 
-func _on_tutorial_next():
+func _on_tutorial_popup_ok():
 	match tut_step:
 		TutStep.INTRO:
 			tut_step = TutStep.BUILD_TEMPLE
+			tut_popup_dismissed = false
 		TutStep.TEMPLE_COMPLETE:
 			tut_step = TutStep.TAP_SHELTER
+			tut_popup_dismissed = false
 		TutStep.COMPLETE:
 			tut_step = TutStep.WHEEL_HINT
+			tut_popup_dismissed = false
+		_:
+			tut_popup_dismissed = true
 	_update_tutorial()
 
 
+func _tut_speech(step: int) -> String:
+	var n: String = GameData.leader_name
+	match step:
+		TutStep.INTRO:
+			return "Greetings, my lord! I am %s, your faithful guide.\n\nFive believers have pledged their lives to your cause. Together, we shall build an empire worthy of the gods!" % n
+		TutStep.BUILD_TEMPLE:
+			return "Your people are restless — they need a place to worship.\n\nBuild a Temple and they will pray, earning you Faith Points. Open the Build menu to begin!"
+		TutStep.PLACE_TEMPLE:
+			return "Choose the perfect spot!\n\nTap anywhere on the map to place the Temple."
+		TutStep.RUSH_PROMPT:
+			return "Patience is a virtue — but Faith is power!\n\nEach Faith Point shaves 10 minutes off construction. Give that Rush button a tap!"
+		TutStep.TEMPLE_COMPLETE:
+			return "Magnificent! The Temple rises in your name.\n\nYour believers can now gather within its walls and pray."
+		TutStep.TAP_SHELTER:
+			return "Time to put your people to work!\n\nTap the Humble Shelter to send your believers to pray at the Temple."
+		TutStep.TAP_GO_PRAY:
+			return "Tap the Go Pray button, choose how many believers to send, then hit Send to Pray.\n\nThey will return after 30 minutes with faith in their hearts."
+		TutStep.CHOOSE_BELIEVERS:
+			return ""
+		TutStep.COMPLETE:
+			return "You've done it, my lord! Faith fuels everything — rush builds, unlock upgrades, and grow your empire.\n\nThe divine path lies open before you."
+		TutStep.WHEEL_HINT:
+			return "One final gift before you go!\n\nThe Grand Priestess has prepared a divine miracle. Tap the Spin chip to claim your first blessing."
+		_:
+			return ""
+
+
 func _pulse_build_button(delta: float):
-	if tut_step == TutStep.BUILD_TEMPLE:
+	if tut_step == TutStep.BUILD_TEMPLE and tut_popup_dismissed:
 		highlight_pulse += delta * 3.0
 		var t := (sin(highlight_pulse) + 1.0) * 0.5
 		build_button.modulate = Color(1.0, lerp(0.55, 1.0, t), lerp(0.15, 0.55, t))
@@ -2332,7 +2391,7 @@ func _pulse_build_button(delta: float):
 		if temple_build_indicator and temple_build_indicator.visible:
 			var arrow_color := Color(1.0, lerp(0.15, 0.35, t), lerp(0.15, 0.35, t), lerp(0.6, 1.0, t))
 			temple_build_indicator.add_theme_color_override("font_color", arrow_color)
-	elif tut_step == TutStep.TAP_SHELTER or tut_step == TutStep.TAP_GO_PRAY:
+	elif (tut_step == TutStep.TAP_SHELTER or tut_step == TutStep.TAP_GO_PRAY) and tut_popup_dismissed:
 		highlight_pulse += delta * 3.0
 		# Pulse the shelter / pray arrows
 		if shelter_arrow_label and shelter_arrow and shelter_arrow.visible:
@@ -2360,8 +2419,6 @@ func _on_build_pressed():
 		_cancel_placement()
 		return
 	build_menu.visible = not build_menu.visible
-	# Hide tutorial bar while build menu is open so it doesn't clutter the screen
-	tutorial_panel.visible = not build_menu.visible and tut_step != TutStep.DONE
 
 
 func _on_build_shelter():
@@ -2412,7 +2469,6 @@ func _try_start_placement(type: String, cost: int):
 	gold -= cost
 	placing_cost = cost
 	build_menu.visible = false
-	tutorial_panel.visible = tut_step != TutStep.DONE
 	_start_placement(type)
 
 
@@ -2431,6 +2487,7 @@ func _start_placement(type: String):
 
 	if type == "temple" and tut_step == TutStep.BUILD_TEMPLE:
 		tut_step = TutStep.PLACE_TEMPLE
+		tut_popup_dismissed = false
 		if temple_build_indicator:
 			temple_build_indicator.visible = false
 		_update_tutorial()
@@ -2444,6 +2501,7 @@ func _cancel_placement():
 	gold += placing_cost   # refund
 	if placing_type == "temple" and tut_step == TutStep.PLACE_TEMPLE:
 		tut_step = TutStep.BUILD_TEMPLE
+		tut_popup_dismissed = false
 		_update_tutorial()
 	placing_type = ""
 	placing_cost = 0
@@ -2491,6 +2549,7 @@ func _place_building(pos: Vector2):
 
 	if type == "temple" and tut_step == TutStep.PLACE_TEMPLE:
 		tut_step = TutStep.RUSH_PROMPT
+		tut_popup_dismissed = false
 		_update_tutorial()
 
 
@@ -2513,6 +2572,7 @@ func _complete_construction():
 			_draw_road(SHELTER_POS + Vector2(0, 40), b.position + Vector2(0, 48))
 			if tut_step == TutStep.RUSH_PROMPT:
 				tut_step = TutStep.TEMPLE_COMPLETE
+				tut_popup_dismissed = false
 				_update_tutorial()
 		"hall_of_devoted":
 			b.tapped.connect(_on_hall_tapped)

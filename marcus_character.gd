@@ -12,8 +12,8 @@ var forced_target: Vector2 = Vector2.ZERO
 signal reached_forced_target
 
 # Animation
-var _bob_time: float = 0.0
-var _sprite: Sprite2D = null
+var _anim: AnimatedSprite2D = null
+
 
 func _ready():
 	var shape := CollisionShape2D.new()
@@ -23,14 +23,47 @@ func _ready():
 	shape.shape = cap
 	add_child(shape)
 
-	_sprite = Sprite2D.new()
-	_sprite.texture = load("res://Marcus map.png")
-	# Scale the PNG down so Marcus is roughly character-sized on the map
-	_sprite.scale    = Vector2(0.09, 0.09)
-	_sprite.centered = true
-	# Offset so feet sit at node origin (same reference as drawn characters)
-	_sprite.position = Vector2(0, -18)
-	add_child(_sprite)
+	_anim = AnimatedSprite2D.new()
+	_anim.centered = true
+
+	# Build SpriteFrames from the 4-frame horizontal sprite sheet
+	var tex: Texture2D = load("res://Marcus Pixel.png")
+	var img: Image     = tex.get_image()
+	var frame_w: int   = img.get_width() / 4
+	var frame_h: int   = img.get_height()
+
+	var frames := SpriteFrames.new()
+
+	# Walk animation — 4 frames at 8 fps, loops
+	frames.add_animation("walk")
+	frames.set_animation_speed("walk", 8.0)
+	frames.set_animation_loop("walk", true)
+	for i in range(4):
+		var atlas := AtlasTexture.new()
+		atlas.atlas  = tex
+		atlas.region = Rect2(i * frame_w, 0, frame_w, frame_h)
+		frames.add_frame("walk", atlas)
+
+	# Idle — just the first frame, no loop needed
+	frames.add_animation("idle")
+	frames.set_animation_speed("idle", 1.0)
+	frames.set_animation_loop("idle", false)
+	var idle_atlas := AtlasTexture.new()
+	idle_atlas.atlas  = tex
+	idle_atlas.region = Rect2(0, 0, frame_w, frame_h)
+	frames.add_frame("idle", idle_atlas)
+
+	_anim.sprite_frames = frames
+
+	# Scale so Marcus is ~30px tall on the map
+	var target_height := 30.0
+	_anim.scale = Vector2.ONE * (target_height / float(frame_h))
+
+	# Offset so feet sit at node origin
+	_anim.position = Vector2(0, -target_height * 0.5)
+
+	add_child(_anim)
+	_anim.play("idle")
 
 
 func setup(pos: Vector2):
@@ -39,28 +72,20 @@ func setup(pos: Vector2):
 	_pick_target()
 
 
-func _process(delta: float):
-	_bob_time += delta
-	if _sprite:
-		# Gentle bob — slightly more energetic when moving
-		var bob_amp := 1.5 if is_waiting else 2.5
-		_sprite.position.y = -18.0 + sin(_bob_time * 3.2) * bob_amp
-		# Cape sway — tiny rotation oscillation
-		_sprite.rotation = sin(_bob_time * 2.8) * 0.04
-
-
 func _physics_process(delta: float):
 	if has_forced_target:
 		var diff := forced_target - position
 		if abs(diff.x) > 2:
-			scale.x = sign(diff.x)
+			_anim.flip_h = diff.x < 0
 		if diff.length() < 10.0:
 			has_forced_target = false
 			velocity = Vector2.ZERO
 			move_and_slide()
+			_anim.play("idle")
 			reached_forced_target.emit()
 			return
 		velocity = diff.normalized() * move_speed
+		_anim.play("walk")
 		move_and_slide()
 		return
 
@@ -70,6 +95,7 @@ func _physics_process(delta: float):
 			is_waiting = false
 			_pick_target()
 		velocity = Vector2.ZERO
+		_anim.play("idle")
 		move_and_slide()
 		return
 
@@ -78,18 +104,20 @@ func _physics_process(delta: float):
 		is_waiting = true
 		wait_timer = randf_range(2.0, 5.0)
 		velocity   = Vector2.ZERO
+		_anim.play("idle")
 	else:
 		if abs(diff.x) > 2:
-			scale.x = sign(diff.x)
+			_anim.flip_h = diff.x < 0
 		velocity = diff.normalized() * move_speed
+		_anim.play("walk")
 
 	move_and_slide()
 
 
 func walk_to(pos: Vector2):
-	forced_target    = pos
+	forced_target     = pos
 	has_forced_target = true
-	is_waiting       = false
+	is_waiting        = false
 
 
 func park():
@@ -97,6 +125,8 @@ func park():
 	is_waiting        = true
 	wait_timer        = 999999.0
 	velocity          = Vector2.ZERO
+	if _anim:
+		_anim.play("idle")
 
 
 func start_wandering(new_home: Vector2):

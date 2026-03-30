@@ -4,6 +4,7 @@ var selected_god := -1
 var selected_leader := -1
 var god_cards := []
 var leader_cards := []
+var leader_sprites: Array = []
 var begin_button: Button
 
 const GODS = [
@@ -58,15 +59,15 @@ func _ready():
 	var margin := MarginContainer.new()
 	margin.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_top",    8)
-	margin.add_theme_constant_override("margin_bottom", 8)
+	margin.add_theme_constant_override("margin_top",    4)
+	margin.add_theme_constant_override("margin_bottom", 4)
 	margin.add_theme_constant_override("margin_left",   35)
 	margin.add_theme_constant_override("margin_right",  35)
 	add_child(margin)
 
 	var vbox := VBoxContainer.new()
 	vbox.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	vbox.add_theme_constant_override("separation", 3)
+	vbox.add_theme_constant_override("separation", 1)
 	margin.add_child(vbox)
 
 	# ── Title ──────────────────────────────────────────────
@@ -201,7 +202,7 @@ func _make_god_card(data: Dictionary, index: int) -> PanelContainer:
 # ── Leader card (portrait + info layout) ──────────────────────────────────────
 func _make_leader_card(data: Dictionary, index: int) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(200, 248)
+	panel.custom_minimum_size = Vector2(200, 252)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = COLOR_DEFAULT
@@ -220,20 +221,20 @@ func _make_leader_card(data: Dictionary, index: int) -> PanelContainer:
 	inner.add_theme_constant_override("separation", 4)
 	panel.add_child(inner)
 
-	# Portrait — clipped to 148px so it fits; shadow ellipse at y≈148 is trimmed
-	var portrait: Control
-	match index:
-		0:
-			portrait = _HighPriestPortrait.new()
-		1:
-			portrait = _ProphetPortrait.new()
-		2:
-			portrait = _HolyGeneralPortrait.new()
-		_:
-			portrait = Control.new()
-			portrait.custom_minimum_size = Vector2(200, 148)
-	portrait.clip_contents = true
-	inner.add_child(portrait)
+	# Portrait — real PNG image with idle + select animation
+	var leader_images := [
+		"res://High Priest.png",
+		"res://Prophet of Wealth.png",
+		"res://Holy General.png"
+	]
+	var tex := TextureRect.new()
+	tex.texture = load(leader_images[index])
+	tex.custom_minimum_size = Vector2(200, 162)
+	tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tex.pivot_offset = Vector2(100, 180)
+	inner.add_child(tex)
+	leader_sprites.append(tex)
 
 	# Name
 	var name_lbl := Label.new()
@@ -285,6 +286,16 @@ func _on_card_selected(index: int, type: String, panel: PanelContainer, style: S
 		selected_god = index
 	else:
 		selected_leader = index
+		for i in range(leader_sprites.size()):
+			var spr: TextureRect = leader_sprites[i]
+			if i == index:
+				var tw := create_tween()
+				tw.tween_property(spr, "scale", Vector2(1.12, 1.12), 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+				tw.parallel().tween_property(spr, "modulate", Color(1.25, 1.20, 0.95, 1.0), 0.3).set_ease(Tween.EASE_OUT)
+			else:
+				var tw := create_tween()
+				tw.tween_property(spr, "scale", Vector2(1.0, 1.0), 0.2).set_ease(Tween.EASE_IN)
+				tw.parallel().tween_property(spr, "modulate", Color.WHITE, 0.2).set_ease(Tween.EASE_IN)
 
 	_update_begin_button()
 
@@ -301,6 +312,17 @@ func _on_begin_pressed():
 	GameData.god_name      = GODS[selected_god]["name"]
 	GameData.leader_name   = LEADERS[selected_leader]["name"]
 	get_tree().change_scene_to_file("res://game.tscn")
+
+
+func _process(_delta: float) -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	for i in range(leader_sprites.size()):
+		if i == selected_leader:
+			continue
+		var spr: TextureRect = leader_sprites[i]
+		var phase := i * 0.9
+		var s := 1.0 + sin(t * 1.6 + phase) * 0.018
+		spr.scale = Vector2(s, s)
 
 
 func _add_separator(parent: VBoxContainer):

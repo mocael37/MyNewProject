@@ -46,6 +46,14 @@ func _setup_png_sprite():
 	_sprite.position = Vector2(0, -scaled_h * 0.5 + 18.0)
 	_sprite.visible = not has_meta("under_construction")
 	add_child(_sprite)
+	# Resize collision shape to match the sprite bounds
+	for child in get_children():
+		if child is CollisionShape2D:
+			var col_rect := RectangleShape2D.new()
+			col_rect.size = Vector2(target_w, scaled_h)
+			child.shape = col_rect
+			child.position = _sprite.position
+			break
 
 func _on_input_event(_viewport, event, _shape_idx):
 	if is_interactive and event is InputEventMouseButton:
