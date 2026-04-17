@@ -244,6 +244,17 @@ func _ready():
 	_build_ui()
 	_spawn_believers()
 	_update_tutorial()
+	_apply_campaign_results()
+
+
+func _apply_campaign_results() -> void:
+	if GameData.campaign_result_believers <= 0:
+		return
+	believers_count += GameData.campaign_result_believers
+	gold            += GameData.campaign_result_believers * 15
+	GameData.campaign_result_believers = 0
+	GameData.campaign_result_stars     = 0
+	_refresh_resource_labels()
 
 
 func _process(delta):
@@ -593,6 +604,29 @@ func _build_top_bar(ui: CanvasLayer):
 	hero_deck_chip.add_child(hdchip_lbl)
 	hero_deck_chip.gui_input.connect(_on_hero_deck_chip_input)
 	hbox.add_child(hero_deck_chip)
+
+	# ── Campaign chip ────────────────────────────────────────────────────────
+	var camp_style := StyleBoxFlat.new()
+	camp_style.bg_color     = Color(0.18, 0.36, 0.16)
+	camp_style.border_color = Color(0.42, 0.72, 0.28)
+	camp_style.set_border_width_all(2)
+	camp_style.set_corner_radius_all(8)
+	camp_style.content_margin_left   = 8
+	camp_style.content_margin_right  = 8
+	camp_style.content_margin_top    = 4
+	camp_style.content_margin_bottom = 4
+	var camp_chip := PanelContainer.new()
+	camp_chip.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	camp_chip.add_theme_stylebox_override("panel", camp_style)
+	camp_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	var camp_lbl := Label.new()
+	camp_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	camp_lbl.text = "⚔ Mission"
+	camp_lbl.add_theme_font_size_override("font_size", 14)
+	camp_lbl.add_theme_color_override("font_color", Color(0.72, 1.00, 0.52))
+	camp_chip.add_child(camp_lbl)
+	camp_chip.gui_input.connect(_on_campaign_chip_input)
+	hbox.add_child(camp_chip)
 
 	_build_people_panel(ui)
 
@@ -4153,3 +4187,8 @@ func _build_hero_deck_panel(ui: CanvasLayer):
 func _on_hero_deck_chip_input(event: InputEvent):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		hero_deck_panel.visible = not hero_deck_panel.visible
+
+
+func _on_campaign_chip_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		get_tree().change_scene_to_file("res://campaign_map.tscn")

@@ -21,6 +21,11 @@ var hair_color: Color
 var tunic_color: Color
 var pants_color: Color
 
+var anim_sprite: AnimatedSprite2D
+
+const FRAME_W := 120
+const FRAME_H := 150
+
 # 5 distinct regular villager looks
 const VARIANTS = [
 	{
@@ -74,20 +79,67 @@ func _ready():
 	shape.shape = cap
 	add_child(shape)
 
+	# Build AnimatedSprite2D from sprite sheet (believers only)
+	_setup_anim_sprite()
+
+func _setup_anim_sprite():
+	var texture = load("res://believer_sheet_clean.png")
+	if texture == null:
+		return
+
+	var frames = SpriteFrames.new()
+
+	# [animation_name, row_index, frame_count, fps]
+	# walk_left reuses row 0 (walk_right) — we flip_h in code
+	var anims = [
+		["walk_right",  0, 6, 8],
+		["walk_away",   1, 6, 8],
+		["walk_toward", 2, 6, 6],
+		["idle",        3, 6, 4],
+	]
+
+	for anim in anims:
+		var anim_name: String = anim[0]
+		var row: int = anim[1]
+		var count: int = anim[2]
+		var fps: int = anim[3]
+		frames.add_animation(anim_name)
+		frames.set_animation_speed(anim_name, float(fps))
+		frames.set_animation_loop(anim_name, true)
+		for i in range(count):
+			var atlas = AtlasTexture.new()
+			atlas.atlas = texture
+			atlas.region = Rect2(i * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+			frames.add_frame(anim_name, atlas)
+
+	anim_sprite = AnimatedSprite2D.new()
+	anim_sprite.sprite_frames = frames
+	# Scale: frame is 125x100, scale 0.6 gives ~60px tall character
+	anim_sprite.scale = Vector2(0.4, 0.4)
+	# Offset up so feet sit at the character's ground point
+	anim_sprite.position = Vector2(0, -30)
+	# Use linear filtering for smooth illustrated art
+	anim_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	add_child(anim_sprite)
+	anim_sprite.play("idle")
+
 func _physics_process(_delta):
 	# Forced walk overrides everything
 	if has_forced_target:
 		var diff = forced_target - position
-		if abs(diff.x) > 2:
-			scale.x = sign(diff.x)
+		if is_preacher or is_soldier:
+			if abs(diff.x) > 2:
+				scale.x = sign(diff.x)
 		if diff.length() < 10.0:
 			has_forced_target = false
 			velocity = Vector2.ZERO
 			move_and_slide()
+			_update_anim(Vector2.ZERO)
 			reached_forced_target.emit()
 			return
 		velocity = diff.normalized() * move_speed
 		move_and_slide()
+		_update_anim(velocity)
 		queue_redraw()
 		return
 
@@ -98,6 +150,7 @@ func _physics_process(_delta):
 			_pick_target()
 		velocity = Vector2.ZERO
 		move_and_slide()
+		_update_anim(Vector2.ZERO)
 		return
 
 	var diff = target_pos - position
@@ -106,12 +159,32 @@ func _physics_process(_delta):
 		wait_timer = randf_range(1.5, 4.5)
 		velocity = Vector2.ZERO
 	else:
-		if abs(diff.x) > 2:
-			scale.x = sign(diff.x)
+		if is_preacher or is_soldier:
+			if abs(diff.x) > 2:
+				scale.x = sign(diff.x)
 		velocity = diff.normalized() * move_speed
 
 	move_and_slide()
+	_update_anim(velocity)
 	queue_redraw()
+
+
+func _update_anim(vel: Vector2):
+	if anim_sprite == null or is_preacher or is_soldier:
+		return
+	if vel.length() < 5.0:
+		anim_sprite.play("idle")
+		return
+	# Pick direction based on dominant axis
+	if abs(vel.x) >= abs(vel.y):
+		anim_sprite.play("walk_right")
+		anim_sprite.flip_h = vel.x < 0   # flip for left
+	else:
+		anim_sprite.flip_h = false
+		if vel.y > 0:
+			anim_sprite.play("walk_toward")
+		else:
+			anim_sprite.play("walk_away")
 
 
 func walk_to(pos: Vector2):
@@ -141,204 +214,106 @@ func _pick_target():
 	target_pos = home_pos + Vector2(cos(angle), sin(angle)) * radius
 
 func _draw():
+	# Believers use AnimatedSprite2D — only draw for preachers and soldiers
 	if is_soldier:
 		_draw_soldier()
 	elif is_preacher:
 		_draw_preacher()
-	else:
-		_draw_believer()
-
-
-func _draw_believer():
-	# Ground shadow
-	draw_ellipse_approx(Vector2(0, 13), 7, 3, Color(0, 0, 0, 0.18))
-
-	# Feet / shoes
-	draw_rect(Rect2(-7, 8, 6, 4), Color(0.28, 0.18, 0.10))
-	draw_rect(Rect2(1, 8, 6, 4), Color(0.28, 0.18, 0.10))
-
-	# Legs
-	draw_rect(Rect2(-7, 0, 5, 10), pants_color)
-	draw_rect(Rect2(2, 0, 5, 10), pants_color)
-
-	# Tunic / body
-	draw_rect(Rect2(-7, -10, 14, 12), tunic_color)
-	# Tunic hem detail
-	draw_rect(Rect2(-7, 0, 14, 2), tunic_color.darkened(0.15))
-
-	# Arms
-	draw_rect(Rect2(-11, -9, 4, 9), skin_color)
-	draw_rect(Rect2(7, -9, 4, 9), skin_color)
-
-	# Neck
-	draw_rect(Rect2(-2, -12, 4, 4), skin_color)
-
-	# Head
-	draw_rect(Rect2(-6, -22, 12, 12), skin_color)
-
-	# Hair
-	draw_rect(Rect2(-6, -22, 12, 5), hair_color)
-	draw_rect(Rect2(-7, -20, 2, 8), hair_color)
-	draw_rect(Rect2(5, -20, 2, 8), hair_color)
-
-	# Eyes
-	draw_rect(Rect2(-4, -16, 2, 2), Color(0.12, 0.10, 0.10))
-	draw_rect(Rect2(2, -16, 2, 2), Color(0.12, 0.10, 0.10))
-
-	# Mouth
-	draw_rect(Rect2(-2, -11, 4, 1), Color(0.60, 0.30, 0.28))
 
 
 func _draw_preacher():
-	const ROBE    := Color(0.96, 0.94, 0.90)   # white robe
-	const ROBE_S  := Color(0.82, 0.80, 0.76)   # robe shadow/fold
-	const ROPE    := Color(0.82, 0.65, 0.18)   # gold rope belt
-	const CROSS_C := Color(0.95, 0.78, 0.12)   # gold cross
-	const OUTLINE := Color(0.55, 0.52, 0.48)   # soft outline
+	const ROBE    := Color(0.96, 0.94, 0.90)
+	const ROBE_S  := Color(0.82, 0.80, 0.76)
+	const ROPE    := Color(0.82, 0.65, 0.18)
+	const CROSS_C := Color(0.95, 0.78, 0.12)
+	const OUTLINE := Color(0.55, 0.52, 0.48)
 
-	# Ground shadow
 	draw_ellipse_approx(Vector2(0, 13), 8, 3, Color(0, 0, 0, 0.20))
-
-	# Long robe (covers feet — wider hem at bottom)
-	draw_rect(Rect2(-8, -10, 16, 24), OUTLINE)          # outline
-	draw_rect(Rect2(-7, -9,  14, 22), ROBE)             # robe body
-	# Robe hem flare
+	draw_rect(Rect2(-8, -10, 16, 24), OUTLINE)
+	draw_rect(Rect2(-7, -9,  14, 22), ROBE)
 	draw_rect(Rect2(-9, 10, 18, 3), OUTLINE)
 	draw_rect(Rect2(-8, 11, 16, 2), ROBE)
-	# Robe fold lines
 	draw_rect(Rect2(-1, -8, 2, 20), ROBE_S)
-
-	# Gold rope belt
 	draw_rect(Rect2(-8, -2, 16, 3), ROPE)
-
-	# Wide sleeves (covers arms)
 	draw_rect(Rect2(-13, -9, 5, 8), OUTLINE)
 	draw_rect(Rect2(-12, -8, 4, 7), ROBE)
 	draw_rect(Rect2(8, -9, 5, 8), OUTLINE)
 	draw_rect(Rect2(8, -8, 4, 7), ROBE)
-
-	# Hands peeking out
 	draw_rect(Rect2(-12, -2, 4, 3), skin_color)
 	draw_rect(Rect2(8, -2, 4, 3), skin_color)
-
-	# Small gold cross on chest
 	draw_rect(Rect2(-1, -8, 2, 6), CROSS_C)
 	draw_rect(Rect2(-3, -6, 6, 2), CROSS_C)
-
-	# Neck
 	draw_rect(Rect2(-2, -12, 4, 4), skin_color)
-
-	# Head
 	draw_rect(Rect2(-6, -22, 12, 12), skin_color)
-
-	# Hood (covers hair, pointed top)
 	draw_rect(Rect2(-7, -24, 14, 14), OUTLINE)
 	draw_rect(Rect2(-6, -23, 12, 13), ROBE_S)
-	# Hood peak
 	var hood_pts := PackedVector2Array([
 		Vector2(-6, -23), Vector2(6, -23), Vector2(2, -30), Vector2(-2, -30)
 	])
 	draw_colored_polygon(hood_pts, ROBE_S)
 	draw_polyline(hood_pts, OUTLINE, 1.0)
-	# Face opening in hood
 	draw_rect(Rect2(-4, -21, 8, 9), skin_color)
-
-	# Eyes
 	draw_rect(Rect2(-3, -17, 2, 2), Color(0.12, 0.10, 0.10))
 	draw_rect(Rect2(2, -17, 2, 2), Color(0.12, 0.10, 0.10))
-
-	# Serene mouth (slight smile)
 	draw_rect(Rect2(-2, -12, 2, 1), Color(0.60, 0.30, 0.28))
 	draw_rect(Rect2(0, -12, 2, 1), Color(0.60, 0.30, 0.28))
-
-	# Halo
 	var halo_pts := PackedVector2Array()
 	for i in range(16):
 		var a = i * TAU / 16
 		halo_pts.append(Vector2(cos(a) * 9, sin(a) * 4 - 28))
 	draw_polyline(halo_pts + PackedVector2Array([halo_pts[0]]), Color(0.95, 0.82, 0.15, 0.70), 1.5)
 
-	# "Needs shelter" floating house icon
 	if needs_shelter:
-		# Speech bubble
 		draw_rect(Rect2(-14, -46, 28, 18), Color(0, 0, 0, 0.55))
 		draw_rect(Rect2(-13, -45, 26, 16), Color(0.95, 0.92, 0.80))
-		# Bubble tail
 		draw_colored_polygon(PackedVector2Array([
 			Vector2(-4, -28), Vector2(4, -28), Vector2(0, -24)
 		]), Color(0.95, 0.92, 0.80))
-		# Mini house icon inside bubble
-		draw_rect(Rect2(-8, -43, 16, 10), Color(0.72, 0.20, 0.08))  # roof
+		draw_rect(Rect2(-8, -43, 16, 10), Color(0.72, 0.20, 0.08))
 		draw_colored_polygon(PackedVector2Array([
 			Vector2(-10, -43), Vector2(10, -43), Vector2(0, -50)
 		]), Color(0.72, 0.20, 0.08))
-		draw_rect(Rect2(-5, -36, 10, 7), Color(0.98, 0.95, 0.88))  # wall
-		draw_rect(Rect2(-2, -34, 4, 5), Color(0.32, 0.16, 0.06))   # door
+		draw_rect(Rect2(-5, -36, 10, 7), Color(0.98, 0.95, 0.88))
+		draw_rect(Rect2(-2, -34, 4, 5), Color(0.32, 0.16, 0.06))
 
 func _draw_soldier():
-	const MAIL   := Color(0.55, 0.57, 0.62)   # chainmail
-	const MAIL_D := Color(0.38, 0.40, 0.44)   # dark mail
-	const HELM   := Color(0.62, 0.65, 0.70)   # helmet
-	const SHIELD := Color(0.62, 0.18, 0.12)   # red shield
-	const SWORD  := Color(0.78, 0.80, 0.85)   # sword blade
+	const MAIL   := Color(0.55, 0.57, 0.62)
+	const MAIL_D := Color(0.38, 0.40, 0.44)
+	const HELM   := Color(0.62, 0.65, 0.70)
+	const SHIELD := Color(0.62, 0.18, 0.12)
+	const SWORD  := Color(0.78, 0.80, 0.85)
 
-	# Ground shadow
 	draw_ellipse_approx(Vector2(0, 13), 8, 3, Color(0, 0, 0, 0.22))
-
-	# Boots
 	draw_rect(Rect2(-7, 8, 6, 4), Color(0.20, 0.14, 0.07))
 	draw_rect(Rect2(1, 8, 6, 4), Color(0.20, 0.14, 0.07))
-
-	# Legs (mail)
 	draw_rect(Rect2(-7, 0, 5, 10), MAIL_D)
 	draw_rect(Rect2(2, 0, 5, 10), MAIL_D)
-
-	# Body armor (chainmail)
 	draw_rect(Rect2(-8, -11, 16, 13), MAIL_D)
 	draw_rect(Rect2(-7, -10, 14, 11), MAIL)
-	# Mail row hints
 	for i in range(3):
 		draw_line(Vector2(-7, -8 + i * 3), Vector2(7, -8 + i * 3), MAIL_D, 1)
-
-	# Shield (left side)
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(-14, -10), Vector2(-8, -10), Vector2(-8, 4), Vector2(-11, 8), Vector2(-14, 4)
 	]), MAIL_D)
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(-13, -9), Vector2(-9, -9), Vector2(-9, 3), Vector2(-11, 7), Vector2(-13, 3)
 	]), SHIELD)
-	draw_circle(Vector2(-11, -1), 2, Color(0.95, 0.80, 0.18))  # shield boss
-
-	# Sword arm (right side)
+	draw_circle(Vector2(-11, -1), 2, Color(0.95, 0.80, 0.18))
 	draw_rect(Rect2(8, -9, 4, 9), skin_color)
-	# Sword blade
 	draw_rect(Rect2(10, -22, 2, 22), SWORD)
-	# Crossguard
 	draw_rect(Rect2(7, -13, 8, 2), MAIL_D)
-	# Grip
 	draw_rect(Rect2(10, -11, 2, 4), Color(0.50, 0.35, 0.15))
-
-	# Neck
 	draw_rect(Rect2(-2, -12, 4, 3), skin_color)
-
-	# Head (face visible)
 	draw_rect(Rect2(-5, -21, 10, 9), skin_color)
-
-	# Nasal helmet
 	draw_rect(Rect2(-7, -25, 14, 7), MAIL_D)
 	draw_rect(Rect2(-6, -24, 12, 6), HELM)
-	# Nasal bar
 	draw_rect(Rect2(-1, -23, 2, 9), HELM.darkened(0.22))
-	# Cheek guards
 	draw_rect(Rect2(-7, -21, 3, 7), MAIL_D)
 	draw_rect(Rect2(4, -21, 3, 7), MAIL_D)
-
-	# Eyes
 	draw_rect(Rect2(-4, -19, 2, 2), Color(0.12, 0.10, 0.10))
 	draw_rect(Rect2(2, -19, 2, 2), Color(0.12, 0.10, 0.10))
 
 
-# Godot 4 has no draw_ellipse — approximate with a scaled circle via polygon
 func draw_ellipse_approx(center: Vector2, rx: float, ry: float, color: Color):
 	var pts := PackedVector2Array()
 	var steps := 12
