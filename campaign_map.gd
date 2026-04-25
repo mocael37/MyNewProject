@@ -1,201 +1,156 @@
 extends Node2D
 
-# ── Campaign config ───────────────────────────────────────────────────────────
-const CAMPAIGN_DURATION := 180.0    # 3-minute demo (represents 30 game-minutes)
-const TOTAL_VILLAGERS   := 8
+# ── Config ────────────────────────────────────────────────────────────────────
+const CAMPAIGN_DURATION := 600.0   # 10 minutes
+const TOTAL_VILLAGERS   := 14
 const MAX_RESISTANCE    := 8.0
-const CONVERT_RANGE     := 70.0     # pixels; preacher must be within this
-const CONVERT_RATE      := 0.9      # resistance drained per second while in range
-const ABILITY_RANGE     := 160.0
-const ABILITY_POWER     := 4.5      # instant resistance hit
-const MAP_W             := 1200
-const MAP_H             := 860
+const CONVERT_RANGE     := 75.0
+const CONVERT_RATE      := 0.85    # resistance drained per second while in range
+const FIGHT_DURATION    := 4.0     # seconds soldier fights at blockade
+const MAP_W             := 2200
+const MAP_H             := 1100
 
-# ── Palette ───────────────────────────────────────────────────────────────────
+# Palette
 const COL_GROUND := Color(0.72, 0.65, 0.50)
 const COL_PATH   := Color(0.60, 0.53, 0.38)
 const COL_WALL   := Color(0.75, 0.63, 0.45)
 const COL_ROOF   := Color(0.45, 0.32, 0.14)
 const COL_WINDOW := Color(0.70, 0.82, 0.90)
 const COL_DOOR   := Color(0.35, 0.22, 0.10)
-const COL_WELL   := Color(0.55, 0.52, 0.48)
-const COL_WATER  := Color(0.28, 0.48, 0.70)
+# Key positions
+const CAMP_DOOR_POS  := Vector2(130, 558)   # converted villagers walk here then vanish
+const PREACHER_START := Vector2(260, 535)
+const SOLDIER_START  := Vector2(275, 558)
+const BLOCKADE_POS   := Vector2(1110, 550)
+const WELL_POS       := Vector2(680, 550)
 
-const ENTRY_POS  := Vector2(55.0, 430.0)
-const RALLY_POS  := Vector2(155.0, 430.0)
-const PLAZA_POS  := Vector2(600.0, 430.0)
-
-# Village house data — {pos: top-left of wall, w: int, h: int}
+# Village houses {pos, w, h}
 const HOUSES := [
-	{"pos": Vector2(430, 190), "w": 100, "h": 80},
-	{"pos": Vector2(620, 165), "w": 90,  "h": 75},
-	{"pos": Vector2(790, 240), "w": 105, "h": 80},
-	{"pos": Vector2(800, 460), "w": 105, "h": 80},
-	{"pos": Vector2(620, 545), "w": 90,  "h": 75},
-	{"pos": Vector2(430, 510), "w": 100, "h": 80},
-	{"pos": Vector2(285, 455), "w": 90,  "h": 75},
-	{"pos": Vector2(285, 235), "w": 90,  "h": 75},
+	{"pos": Vector2(320,  295), "w": 95,  "h": 75},
+	{"pos": Vector2(430,  420), "w": 85,  "h": 70},
+	{"pos": Vector2(320,  645), "w": 95,  "h": 75},
+	{"pos": Vector2(680,  215), "w": 100, "h": 80},
+	{"pos": Vector2(840,  175), "w": 95,  "h": 75},
+	{"pos": Vector2(985,  265), "w": 100, "h": 80},
+	{"pos": Vector2(680,  695), "w": 100, "h": 80},
+	{"pos": Vector2(840,  748), "w": 95,  "h": 75},
+	{"pos": Vector2(985,  645), "w": 100, "h": 80},
+	{"pos": Vector2(1300, 240), "w": 100, "h": 80},
+	{"pos": Vector2(1490, 170), "w": 95,  "h": 75},
+	{"pos": Vector2(1680, 240), "w": 100, "h": 80},
+	{"pos": Vector2(1300, 660), "w": 100, "h": 80},
+	{"pos": Vector2(1490, 730), "w": 95,  "h": 75},
+	{"pos": Vector2(1680, 645), "w": 100, "h": 80},
 ]
 
-# Villager wander centres — one per house
+# Villager wander centres — left cluster (0-2), central (3-7), right behind blockade (8-13)
 const VILLAGER_HOMES := [
-	Vector2(480, 270),
-	Vector2(665, 250),
-	Vector2(843, 310),
-	Vector2(853, 530),
-	Vector2(665, 620),
-	Vector2(480, 590),
-	Vector2(330, 525),
-	Vector2(330, 305),
+	Vector2(368, 370),
+	Vector2(473, 492),
+	Vector2(368, 720),
+	Vector2(730, 295),
+	Vector2(888, 250),
+	Vector2(1035, 345),
+	Vector2(730, 775),
+	Vector2(888, 823),
+	Vector2(1350, 320),
+	Vector2(1538, 248),
+	Vector2(1730, 320),
+	Vector2(1350, 740),
+	Vector2(1538, 808),
+	Vector2(1730, 725),
 ]
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
-var timer_remaining : float = CAMPAIGN_DURATION
-var converted_count : int   = 0
-var campaign_ended  : bool  = false
-var ability_used    : bool  = false
+var timer_remaining  : float = CAMPAIGN_DURATION
+var converted_count  : int   = 0
+var campaign_ended   : bool  = false
+var blockade_alive   : bool  = true
+var soldier_fighting : bool  = false
+var fight_timer      : float = 0.0
+var conversion_mult  : float = 1.0   # hero passive bonus
 
-# ── Node refs ─────────────────────────────────────────────────────────────────
-var cam            : Camera2D        = null
-var ui_layer       : CanvasLayer     = null
-var timer_label    : Label           = null
-var converted_label: Label           = null
-var ability_btn    : Button          = null
-var result_panel   : PanelContainer  = null
+# Node refs
+var cam             : Camera2D       = null
+var ui_layer        : CanvasLayer    = null
+var timer_label     : Label          = null
+var converted_label : Label          = null
+var result_panel    : PanelContainer = null
+var fight_label     : Label          = null
 
 var preacher_node  : CharacterBody2D = null
-var villager_nodes : Array = []   # CharacterBody2D × TOTAL_VILLAGERS
-var villager_resist: Array = []   # float × TOTAL_VILLAGERS
-var villager_done  : Array = []   # bool  × TOTAL_VILLAGERS
-var bar_bgs        : Array = []   # ColorRect (background) per villager
-var bar_fills      : Array = []   # ColorRect (fill) per villager
+var soldier_node   : CharacterBody2D = null
+var villager_nodes : Array = []
+var villager_resist: Array = []   # float  — current resistance (MAX → 0)
+var villager_done  : Array = []   # bool   — converted and sent home
+var villager_active: Array = []   # bool   — preacher has touched this villager at least once
+var bar_bgs          : Array = []
+var bar_fills        : Array = []
+var blockade_guards  : Array = []
+
+var is_panning   : bool    = false
+var pan_last_pos : Vector2 = Vector2.ZERO
 
 # ── Ready ─────────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
+	_apply_hero_bonus()
 	_build_camera()
 	_build_ui()
+	_spawn_trees()
+	_spawn_village_houses()
+	_spawn_well()
+	_spawn_camp_building()
 	_spawn_villagers()
 	_spawn_preacher()
-	# _draw() fires automatically when the node enters the scene tree
+	_spawn_soldier()
+	_spawn_blockade_guards()
 
-# ── Village drawing ───────────────────────────────────────────────────────────
+func _apply_hero_bonus() -> void:
+	# Placeholder: wire to GameData hero selection when hero system is ready
+	conversion_mult = 1.0
+
+# ── Drawing ───────────────────────────────────────────────────────────────────
 
 func _draw() -> void:
-	# Ground
 	draw_rect(Rect2(0, 0, MAP_W, MAP_H), COL_GROUND)
+	_draw_roads()
+	if blockade_alive:
+		_draw_blockade()
 
-	# Dirt paths — horizontal + vertical cross through plaza
-	draw_rect(Rect2(0,   400, MAP_W, 65), COL_PATH)
-	draw_rect(Rect2(560,   0,  80, MAP_H), COL_PATH)
+func _draw_roads() -> void:
+	# Main east-west road
+	draw_rect(Rect2(0, 515, MAP_W, 70), COL_PATH)
+	# Vertical branches (N and S of main road)
+	draw_rect(Rect2(375,  0,   70, 515),            COL_PATH)
+	draw_rect(Rect2(375,  585, 70, MAP_H - 585),    COL_PATH)
+	draw_rect(Rect2(875,  0,   70, 515),            COL_PATH)
+	draw_rect(Rect2(875,  585, 70, MAP_H - 585),    COL_PATH)
+	draw_rect(Rect2(1490, 0,   70, 515),            COL_PATH)
+	draw_rect(Rect2(1490, 585, 70, MAP_H - 585),    COL_PATH)
 
-	# Entry lane (left edge → first houses)
-	draw_rect(Rect2(0, 395, 285, 75), COL_PATH.darkened(0.08))
-
-	# Plaza stone (slightly lighter than path)
-	draw_rect(Rect2(530, 380, 140, 105), COL_PATH.lightened(0.14))
-	draw_rect(Rect2(534, 384, 132,  97), COL_PATH.lightened(0.20))
-
-	# Fence posts along the entry lane
-	for i in range(6):
-		var fx : float = 100.0 + float(i) * 30.0
-		draw_rect(Rect2(fx, 390, 5, 20), Color(0.50, 0.38, 0.18))
-		draw_rect(Rect2(fx, 425, 5, 20), Color(0.50, 0.38, 0.18))
-		if i < 5:
-			draw_line(Vector2(fx, 400), Vector2(fx + 30.0, 400), Color(0.44, 0.34, 0.14), 2.0)
-			draw_line(Vector2(fx, 435), Vector2(fx + 30.0, 435), Color(0.44, 0.34, 0.14), 2.0)
-
-	# Gate posts at map entry
-	draw_rect(Rect2(14, 373, 12, 56), Color(0.50, 0.42, 0.28))
-	draw_rect(Rect2(31, 363, 10, 62), Color(0.55, 0.46, 0.30))
-	draw_rect(Rect2(9,  358, 38, 18), Color(0.42, 0.30, 0.12))   # sign board
-	draw_rect(Rect2(11, 360, 34, 14), Color(0.56, 0.44, 0.22))
-
-	# Village houses
-	for house in HOUSES:
-		var pos : Vector2 = house["pos"]
-		var w   : int     = house["w"]
-		var h   : int     = house["h"]
-		_draw_house(pos, w, h)
-
-	# Well at plaza
-	_draw_well(PLAZA_POS)
-
-func _draw_well(center: Vector2) -> void:
-	# Stone ring
-	for i in range(12):
-		var a   : float   = float(i) * TAU / 12.0
-		var sp  : Vector2 = center + Vector2(cos(a) * 22.0, sin(a) * 16.0)
-		var dark: float   = 0.15 + 0.10 * float(i % 2)
-		draw_rect(Rect2(sp - Vector2(5, 4), Vector2(10, 8)), COL_WELL.darkened(dark))
-	draw_circle(center, 16.0, COL_WELL)
-	draw_circle(center, 12.0, COL_WELL.darkened(0.2))
-	draw_circle(center,  9.0, COL_WATER)
-	# Support posts
-	draw_rect(Rect2(center + Vector2(-22, -28), Vector2(6, 28)), Color(0.48, 0.34, 0.16))
-	draw_rect(Rect2(center + Vector2( 16, -28), Vector2(6, 28)), Color(0.48, 0.34, 0.16))
-	# Roof beam
-	draw_rect(Rect2(center + Vector2(-25, -32), Vector2(50, 6)), Color(0.42, 0.30, 0.12))
-
-func _draw_house(pos: Vector2, w: int, h: int) -> void:
-	# Drop shadow
-	draw_rect(Rect2(pos + Vector2(3, 3), Vector2(w, h)), Color(0.28, 0.22, 0.14, 0.40))
-
-	# Wall
-	draw_rect(Rect2(pos, Vector2(w, h)), COL_WALL.darkened(0.25))
-	draw_rect(Rect2(pos + Vector2(1, 1), Vector2(w - 2, h - 2)), COL_WALL)
-
-	# Stone-row texture
-	for row in range(3):
-		draw_line(
-			pos + Vector2(2.0, 18.0 + float(row) * 20.0),
-			pos + Vector2(float(w) - 2.0, 18.0 + float(row) * 20.0),
-			COL_WALL.darkened(0.18), 1.0
-		)
-
-	# Thatched roof (triangle, overhangs wall)
-	var ov : int = 10
-	var roof := PackedVector2Array([
-		pos + Vector2(-ov, 0),
-		pos + Vector2(w + ov, 0),
-		pos + Vector2(w / 2, -38)
-	])
-	draw_colored_polygon(roof, COL_ROOF.darkened(0.12))
-	var inner_roof := PackedVector2Array([
-		pos + Vector2(-ov + 2, -2),
-		pos + Vector2(w + ov - 2, -2),
-		pos + Vector2(w / 2, -36)
-	])
-	draw_colored_polygon(inner_roof, COL_ROOF)
-	draw_line(pos + Vector2(w / 2 - 2, -36), pos + Vector2(w / 2 + 2, -36),
-		COL_ROOF.lightened(0.18), 2.5)
-
-	# Left window
-	draw_rect(Rect2(pos + Vector2(7, 12), Vector2(20, 18)), COL_WALL.darkened(0.30))
-	draw_rect(Rect2(pos + Vector2(8, 13), Vector2(18, 16)), COL_WINDOW)
-	draw_line(pos + Vector2(17.0, 13.0), pos + Vector2(17.0, 29.0), COL_WALL.darkened(0.2), 1.5)
-	draw_line(pos + Vector2(8.0,  21.0), pos + Vector2(26.0, 21.0), COL_WALL.darkened(0.2), 1.5)
-
-	# Right window
-	draw_rect(Rect2(pos + Vector2(w - 27, 12), Vector2(20, 18)), COL_WALL.darkened(0.30))
-	draw_rect(Rect2(pos + Vector2(w - 26, 13), Vector2(18, 16)), COL_WINDOW)
-	draw_line(pos + Vector2(float(w) - 17.0, 13.0), pos + Vector2(float(w) - 17.0, 29.0), COL_WALL.darkened(0.2), 1.5)
-	draw_line(pos + Vector2(float(w) - 26.0, 21.0), pos + Vector2(float(w) - 8.0, 21.0),  COL_WALL.darkened(0.2), 1.5)
-
-	# Door (centred at bottom)
-	var dx : float = pos.x + float(w) / 2.0 - 11.0
-	var dy : float = pos.y + float(h) - 32.0
-	draw_rect(Rect2(dx, dy, 22, 32), COL_DOOR.darkened(0.20))
-	draw_rect(Rect2(dx + 1, dy + 1, 20, 31), COL_DOOR)
-	draw_circle(Vector2(dx + 11.0, dy), 11.0, COL_DOOR)
-	draw_circle(Vector2(dx + 11.0, dy),  9.0, COL_DOOR.lightened(0.08))
-	draw_circle(Vector2(dx + 16.0, dy + 18.0), 2.0, Color(0.82, 0.68, 0.14))
+func _draw_blockade() -> void:
+	var bx : float = BLOCKADE_POS.x
+	var by : float = BLOCKADE_POS.y
+	# Wooden planks across the road
+	for i in range(5):
+		var px : float = bx - 58.0 + float(i) * 28.0
+		draw_rect(Rect2(px, by - 40.0, 22.0, 80.0), Color(0.48, 0.34, 0.14))
+		draw_rect(Rect2(px + 2.0, by - 38.0, 18.0, 76.0), Color(0.58, 0.42, 0.18))
+	# Crossbeams
+	draw_rect(Rect2(bx - 62.0, by - 8.0, 124.0, 10.0), Color(0.40, 0.28, 0.10))
+	draw_rect(Rect2(bx - 62.0, by + 6.0, 124.0, 10.0), Color(0.40, 0.28, 0.10))
+	# Guards are spawned as real soldier nodes (see _spawn_blockade_guards)
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 
 func _build_camera() -> void:
 	cam = Camera2D.new()
-	cam.position = Vector2(MAP_W / 2.0, MAP_H / 2.0)
+	cam.position     = Vector2(380, MAP_H / 2.0)
+	cam.limit_left   = 0
+	cam.limit_right  = MAP_W
+	cam.limit_top    = 0
+	cam.limit_bottom = MAP_H
 	add_child(cam)
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -205,102 +160,108 @@ func _build_ui() -> void:
 	ui_layer.layer = 10
 	add_child(ui_layer)
 
-	# Top bar background
-	var top_bg := ColorRect.new()
-	top_bg.color = Color(0.08, 0.06, 0.04, 0.90)
-	top_bg.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	top_bg.custom_minimum_size = Vector2(0, 54)
-	ui_layer.add_child(top_bg)
-
-	# Timer (centre)
 	timer_label = Label.new()
 	timer_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	timer_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	timer_label.offset_top    = 10
-	timer_label.offset_bottom = 50
-	timer_label.add_theme_font_size_override("font_size", 24)
-	timer_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.30))
+	timer_label.offset_top    = 8
+	timer_label.offset_bottom = 42
+	timer_label.add_theme_font_size_override("font_size", 22)
+	timer_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.40))
+	timer_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.80))
+	timer_label.add_theme_constant_override("shadow_offset_x", 2)
+	timer_label.add_theme_constant_override("shadow_offset_y", 2)
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	ui_layer.add_child(timer_label)
 
-	# Converted count (left)
 	converted_label = Label.new()
 	converted_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	converted_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	converted_label.offset_left   = 14
-	converted_label.offset_top    = 13
-	converted_label.offset_right  = 250
-	converted_label.offset_bottom = 48
-	converted_label.add_theme_font_size_override("font_size", 17)
+	converted_label.offset_left   = 10
+	converted_label.offset_top    = 10
+	converted_label.offset_right  = 240
+	converted_label.offset_bottom = 40
+	converted_label.add_theme_font_size_override("font_size", 16)
 	converted_label.add_theme_color_override("font_color", Color(0.70, 1.0, 0.55))
+	converted_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.80))
+	converted_label.add_theme_constant_override("shadow_offset_x", 2)
+	converted_label.add_theme_constant_override("shadow_offset_y", 2)
 	ui_layer.add_child(converted_label)
 	_refresh_converted_label()
 
-	# Location name (right)
 	var loc_label := Label.new()
 	loc_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	loc_label.text = "Village of Ashford"
 	loc_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	loc_label.offset_top    = 16
-	loc_label.offset_left   = -240
-	loc_label.offset_right  = -14
-	loc_label.offset_bottom = 48
-	loc_label.add_theme_font_size_override("font_size", 14)
-	loc_label.add_theme_color_override("font_color", Color(0.75, 0.70, 0.60))
+	loc_label.offset_top    = 12
+	loc_label.offset_left   = -230
+	loc_label.offset_right  = -10
+	loc_label.offset_bottom = 40
+	loc_label.add_theme_font_size_override("font_size", 13)
+	loc_label.add_theme_color_override("font_color", Color(0.95, 0.90, 0.75))
+	loc_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.80))
+	loc_label.add_theme_constant_override("shadow_offset_x", 2)
+	loc_label.add_theme_constant_override("shadow_offset_y", 2)
 	loc_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	ui_layer.add_child(loc_label)
 
-	# Bottom bar background
-	var bot_bg := ColorRect.new()
-	bot_bg.color = Color(0.08, 0.06, 0.04, 0.90)
-	bot_bg.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	bot_bg.offset_top = -74
-	ui_layer.add_child(bot_bg)
-
-	# Active ability button
-	ability_btn = Button.new()
-	ability_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	ability_btn.text = "✦ Holy Word  (area conversion)"
-	ability_btn.add_theme_font_size_override("font_size", 14)
-	ability_btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	ability_btn.offset_bottom = -8
-	ability_btn.offset_top    = -66
-	ability_btn.offset_left   = 14
-	ability_btn.offset_right  = 280
-	ability_btn.connect("pressed", _use_ability)
-	ui_layer.add_child(ability_btn)
-
-	# Tap hint
-	var hint := Label.new()
-	hint.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	hint.text = "Tap a villager to direct your preacher"
-	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	hint.offset_bottom = -8
-	hint.offset_top    = -66
-	hint.add_theme_font_size_override("font_size", 13)
-	hint.add_theme_color_override("font_color", Color(0.60, 0.55, 0.45))
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ui_layer.add_child(hint)
-
-	# Resistance bars — one per villager
+	# Per-villager conversion bars (hidden until preacher activates them)
 	for i in range(TOTAL_VILLAGERS):
 		var bg := ColorRect.new()
-		bg.color               = Color(0.12, 0.10, 0.08, 0.88)
-		bg.custom_minimum_size = Vector2(46, 7)
-		bg.size                = Vector2(46, 7)
+		bg.color               = Color(0.12, 0.10, 0.08, 0.90)
+		bg.custom_minimum_size = Vector2(48, 8)
+		bg.size                = Vector2(48, 8)
+		bg.visible             = false
+		bg.mouse_filter        = Control.MOUSE_FILTER_STOP
+		bg.connect("gui_input", _on_bar_input.bind(i))
 		ui_layer.add_child(bg)
 		bar_bgs.append(bg)
 
 		var fill := ColorRect.new()
-		fill.color = Color(0.22, 0.82, 0.30)
-		fill.size  = Vector2(46, 7)
+		fill.color        = Color(0.85, 0.22, 0.12)
+		fill.size         = Vector2(0, 8)
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bg.add_child(fill)
 		bar_fills.append(fill)
 
 		villager_resist.append(MAX_RESISTANCE)
 		villager_done.append(false)
+		villager_active.append(false)
+
+	# Fight label (shows over blockade while soldier fights)
+	fight_label = Label.new()
+	fight_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	fight_label.text    = "⚔ Fighting!"
+	fight_label.visible = false
+	fight_label.add_theme_font_size_override("font_size", 14)
+	fight_label.add_theme_color_override("font_color", Color(1.0, 0.28, 0.16))
+	ui_layer.add_child(fight_label)
+
+	# Bottom hint bar
+	var bot_bg := ColorRect.new()
+	bot_bg.color = Color(0.08, 0.06, 0.04, 0.85)
+	bot_bg.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	bot_bg.offset_top = -42
+	ui_layer.add_child(bot_bg)
+
+	var hint := Label.new()
+	hint.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	hint.text = "Tap villager → send preacher  ·  Tap bar → instant convert  ·  Tap blockade → send soldier"
+	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	hint.offset_bottom = -6
+	hint.offset_top    = -40
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Color(0.58, 0.54, 0.44))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ui_layer.add_child(hint)
 
 	_build_result_panel()
+
+func _on_bar_input(event: InputEvent, idx: int) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	if villager_active[idx] and not villager_done[idx]:
+		villager_resist[idx] = 0.0
+		_convert_villager(idx)
 
 func _build_result_panel() -> void:
 	result_panel = PanelContainer.new()
@@ -308,8 +269,8 @@ func _build_result_panel() -> void:
 	result_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	result_panel.offset_left   = -215
 	result_panel.offset_right  =  215
-	result_panel.offset_top    = -190
-	result_panel.offset_bottom =  190
+	result_panel.offset_top    = -185
+	result_panel.offset_bottom =  185
 	result_panel.visible = false
 
 	var style := StyleBoxFlat.new()
@@ -365,44 +326,156 @@ func _build_result_panel() -> void:
 
 # ── Spawning ──────────────────────────────────────────────────────────────────
 
+func _spawn_trees() -> void:
+	var tex15 : Texture2D = load("res://Comp15.png")
+	var tex16 : Texture2D = load("res://Comp16.png")
+	if tex15 == null or tex16 == null:
+		return
+	# [type(15|16), world_x, world_y_center, size_scale]
+	# Placed to avoid roads (x=375-445, 875-945, 1490-1560; y=515-585) and houses
+	var data := [
+		# Far top-left corner
+		[15,   30,   80,  1.00], [16,  130,   45,  0.88], [16,  250,   95,  0.85],
+		# Left strip / mid
+		[16,  270,  420,  0.75], [15,   80,  900,  0.88], [16,  200,  970,  0.85],
+		# Top — between road1 and road2
+		[15,  500,   80,  0.92], [16,  680,   70,  0.85], [15,  800,   60,  0.90],
+		[16,  490,  360,  0.80],
+		# Top — between road2 and road3
+		[15, 1000,   90,  0.90], [16, 1150,   70,  0.85],
+		[16, 1280,   90,  0.88], [15, 1420,  100,  0.82],
+		# Top — right of road3
+		[16, 1620,   80,  0.90], [15, 1760,   55,  0.95],
+		[16, 1930,   80,  0.88], [15, 2100,  120,  0.92], [16, 2180,  280,  0.85],
+		# Far-right strip
+		[15, 2150,  460,  0.90], [16, 2150,  700,  0.85],
+		# Bottom — between road1 and road2
+		[15,  510,  950,  0.88], [16,  700,  980,  0.82], [15,  820,  960,  0.90],
+		# Bottom — between road2 and road3
+		[16, 1010,  950,  0.88], [15, 1200,  980,  0.90], [16, 1380,  960,  0.85],
+		# Bottom — right of road3
+		[15, 1620,  980,  0.92], [16, 1820, 1000,  0.88],
+		[15, 2050,  960,  0.90], [16, 2150,  820,  0.85],
+	]
+	var base_w := 92.0
+	for t in data:
+		var tex : Texture2D = tex15 if t[0] == 15 else tex16
+		var s := Sprite2D.new()
+		s.texture = tex
+		var sc := (base_w * float(t[3])) / float(tex.get_width())
+		s.scale = Vector2(sc, sc)
+		s.position = Vector2(float(t[1]), float(t[2]))
+		add_child(s)
+
+func _spawn_village_houses() -> void:
+	var tex : Texture2D = load("res://Comp1.png")
+	if tex == null:
+		return
+	var target_w := 92.0
+	var sc := target_w / float(tex.get_width())
+	var scaled_h := float(tex.get_height()) * sc
+	for h in HOUSES:
+		var s := Sprite2D.new()
+		s.texture = tex
+		s.scale = Vector2(sc, sc)
+		# Align bottom of sprite with house ground level; offset so chimney clears
+		var hp  := h["pos"] as Vector2
+		var cx  : float = hp.x + (h["w"] as int) * 0.5
+		var cy  : float = hp.y + (h["h"] as int) - scaled_h * 0.5 + 12.0
+		s.position = Vector2(cx, cy)
+		add_child(s)
+
+func _spawn_well() -> void:
+	var tex : Texture2D = load("res://Comp10.png")
+	if tex == null:
+		return
+	var s := Sprite2D.new()
+	s.texture = tex
+	var sc := 78.0 / float(tex.get_width())
+	s.scale = Vector2(sc, sc)
+	s.position = WELL_POS
+	add_child(s)
+
+func _spawn_camp_building() -> void:
+	var b := StaticBody2D.new()
+	b.set_script(load("res://building.gd"))
+	b.building_type = "preacher_shelter"
+	b.position = Vector2(130, 510)
+	add_child(b)
+
+func _spawn_blockade_guards() -> void:
+	for gx in [BLOCKADE_POS.x - 78.0, BLOCKADE_POS.x + 64.0]:
+		var g : CharacterBody2D = preload("res://believer.tscn").instantiate()
+		g.is_soldier = true
+		add_child(g)
+		g.setup(Vector2(gx, BLOCKADE_POS.y - 10.0), 0)
+		g.park()
+		g.scale.x = -1   # face left (toward the player's side)
+		blockade_guards.append(g)
+
 func _spawn_villagers() -> void:
 	for i in range(TOTAL_VILLAGERS):
 		var v : CharacterBody2D = preload("res://believer.tscn").instantiate()
-		var home : Vector2 = VILLAGER_HOMES[i]
-		v.setup(home, i)
+		v.setup(VILLAGER_HOMES[i], i)
 		add_child(v)
 		villager_nodes.append(v)
 
 func _spawn_preacher() -> void:
 	preacher_node = preload("res://believer.tscn").instantiate()
 	preacher_node.is_preacher = true
-	preacher_node.move_speed = 58.0
+	preacher_node.move_speed  = 58.0
 	add_child(preacher_node)
-	preacher_node.setup(ENTRY_POS, 0)
+	preacher_node.setup(PREACHER_START, 0)
 
-# ── Input — tap villager to direct preacher ───────────────────────────────────
+func _spawn_soldier() -> void:
+	soldier_node = preload("res://believer.tscn").instantiate()
+	soldier_node.is_soldier = true
+	soldier_node.move_speed = 62.0
+	add_child(soldier_node)
+	soldier_node.setup(SOLDIER_START, 1)
+
+# ── Input ─────────────────────────────────────────────────────────────────────
 
 func _unhandled_input(event: InputEvent) -> void:
 	if campaign_ended:
 		return
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
-		return
-	var world_pos : Vector2 = get_viewport().get_canvas_transform().affine_inverse() * event.position
-	var best_idx  : int   = -1
-	var best_dist : float = 70.0
-	for i in range(TOTAL_VILLAGERS):
-		if villager_done[i]:
-			continue
-		var d : float = (villager_nodes[i].global_position - world_pos).length()
-		if d < best_dist:
-			best_dist = d
-			best_idx  = i
-	if best_idx >= 0:
-		preacher_node.walk_to(villager_nodes[best_idx].global_position)
+	if event is InputEventMouseButton:
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			var world_pos : Vector2 = get_viewport().get_canvas_transform().affine_inverse() * event.position
+			# Villager tap → direct preacher
+			var best_idx  : int   = -1
+			var best_dist : float = 68.0
+			for i in range(TOTAL_VILLAGERS):
+				if villager_done[i]:
+					continue
+				var d : float = (villager_nodes[i].global_position - world_pos).length()
+				if d < best_dist:
+					best_dist = d
+					best_idx  = i
+			if best_idx >= 0:
+				preacher_node.walk_to(villager_nodes[best_idx].global_position)
+				return
+			# Blockade tap → send soldier
+			if blockade_alive and not soldier_fighting:
+				var bd : float = (BLOCKADE_POS - world_pos).length()
+				if bd < 88.0:
+					_send_soldier_to_blockade()
+					return
+		elif event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			is_panning   = true
+			pan_last_pos = event.position
+		elif not event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			is_panning = false
+	elif event is InputEventMouseMotion and is_panning:
+		var delta : Vector2 = pan_last_pos - event.position
+		pan_last_pos = event.position
+		cam.position += delta
+		cam.position.x = clamp(cam.position.x, 0.0, float(MAP_W))
+		cam.position.y = clamp(cam.position.y, 0.0, float(MAP_H))
 
 # ── Process ───────────────────────────────────────────────────────────────────
 
-func _process(delta) -> void:
+func _process(delta: float) -> void:
 	if campaign_ended:
 		return
 	timer_remaining -= delta
@@ -413,21 +486,21 @@ func _process(delta) -> void:
 	_update_timer_label()
 	_tick_conversion(delta)
 	_update_bar_positions()
+	_tick_fight(delta)
 
 func _update_timer_label() -> void:
 	var mins : int = int(timer_remaining) / 60
 	var secs : int = int(timer_remaining) % 60
 	timer_label.text = "⏱  %d:%02d" % [mins, secs]
-	# Shift colour red in last 30 seconds
-	if timer_remaining < 30.0:
-		var t : float = timer_remaining / 30.0
+	if timer_remaining < 60.0:
+		var t : float = timer_remaining / 60.0
 		timer_label.add_theme_color_override("font_color", Color(1.0, t * 0.70, t * 0.20))
 
 func _refresh_converted_label() -> void:
 	if converted_label:
 		converted_label.text = "Converted:  %d / %d" % [converted_count, TOTAL_VILLAGERS]
 
-func _tick_conversion(delta) -> void:
+func _tick_conversion(delta: float) -> void:
 	if preacher_node == null:
 		return
 	var p_pos : Vector2 = preacher_node.global_position
@@ -436,62 +509,72 @@ func _tick_conversion(delta) -> void:
 			continue
 		var dist : float = (villager_nodes[i].global_position - p_pos).length()
 		if dist <= CONVERT_RANGE:
-			villager_resist[i] -= CONVERT_RATE * delta
+			if not villager_active[i]:
+				villager_active[i]  = true
+				bar_bgs[i].visible  = true
+			villager_resist[i] -= CONVERT_RATE * conversion_mult * delta
 			if villager_resist[i] <= 0.0:
 				villager_resist[i] = 0.0
 				_convert_villager(i)
 				continue
-		# Update bar fill width and colour
-		var pct  : float    = villager_resist[i] / MAX_RESISTANCE
-		var fill : ColorRect = bar_fills[i]
-		fill.size = Vector2(46.0 * pct, fill.size.y)
-		if pct > 0.5:
-			fill.color = Color(1.0 - (1.0 - pct) * 2.0, 0.82, 0.22)
-		else:
-			fill.color = Color(0.92, pct * 2.0 * 0.82, 0.10)
+		if not villager_active[i]:
+			continue
+		# Update bar fill — grows from left as resistance drains
+		var progress : float    = 1.0 - (villager_resist[i] / MAX_RESISTANCE)
+		var fill     : ColorRect = bar_fills[i]
+		fill.size  = Vector2(48.0 * progress, fill.size.y)
+		fill.color = Color(0.85, 0.22, 0.12).lerp(Color(0.20, 0.88, 0.22), progress)
 
 func _convert_villager(idx: int) -> void:
-	villager_done[idx] = true
+	villager_done[idx]           = true
+	bar_bgs[idx].visible         = false
+	villager_nodes[idx].modulate = Color(1.0, 0.90, 0.40)
+	villager_nodes[idx].walk_to(CAMP_DOOR_POS)
+	villager_nodes[idx].reached_forced_target.connect(_on_villager_home.bind(idx), CONNECT_ONE_SHOT)
+
+func _on_villager_home(idx: int) -> void:
+	villager_nodes[idx].visible = false
 	converted_count += 1
 	_refresh_converted_label()
-	var bg : ColorRect = bar_bgs[idx]
-	bg.visible = false
-	# Golden tint — villager has joined your faith
-	villager_nodes[idx].modulate = Color(1.0, 0.90, 0.40)
-	# Walk to rally point, staggered so they don't pile up
-	var rally : Vector2 = RALLY_POS + Vector2(0.0, float(idx - 4) * 22.0)
-	villager_nodes[idx].walk_to(rally)
 	if converted_count >= TOTAL_VILLAGERS:
 		_end_campaign()
 
 func _update_bar_positions() -> void:
 	var ct : Transform2D = get_viewport().get_canvas_transform()
 	for i in range(TOTAL_VILLAGERS):
-		if villager_done[i]:
+		if not villager_active[i] or villager_done[i]:
 			continue
 		var screen_pos : Vector2 = ct * villager_nodes[i].global_position
-		var bg : ColorRect = bar_bgs[i]
-		bg.position = screen_pos + Vector2(-23.0, -42.0)
+		bar_bgs[i].position = screen_pos + Vector2(-24.0, -48.0)
 
-# ── Active ability — Holy Word ────────────────────────────────────────────────
-
-func _use_ability() -> void:
-	if ability_used or campaign_ended:
+func _tick_fight(delta: float) -> void:
+	if not soldier_fighting:
 		return
-	ability_used = true
-	ability_btn.disabled = true
-	ability_btn.text = "✦ Holy Word  (used)"
-	ability_btn.modulate = Color(0.50, 0.50, 0.50)
+	if fight_timer <= 0.0:
+		return
+	fight_timer -= delta
+	# Update fight label position above blockade
+	var ct : Transform2D = get_viewport().get_canvas_transform()
+	var sp : Vector2 = ct * BLOCKADE_POS
+	fight_label.position = sp + Vector2(-38.0, -58.0)
+	if fight_timer <= 0.0:
+		soldier_fighting    = false
+		blockade_alive      = false
+		fight_label.visible = false
+		queue_redraw()
+		soldier_node.park()
+		for g in blockade_guards:
+			g.queue_free()
+		blockade_guards.clear()
 
-	var p_pos : Vector2 = preacher_node.global_position
-	for i in range(TOTAL_VILLAGERS):
-		if villager_done[i]:
-			continue
-		var dist : float = (villager_nodes[i].global_position - p_pos).length()
-		if dist <= ABILITY_RANGE:
-			villager_resist[i] = max(0.0, villager_resist[i] - ABILITY_POWER)
-			if villager_resist[i] <= 0.0:
-				_convert_villager(i)
+func _send_soldier_to_blockade() -> void:
+	soldier_fighting    = true
+	fight_label.visible = true
+	soldier_node.walk_to(BLOCKADE_POS)
+	soldier_node.reached_forced_target.connect(_on_soldier_at_blockade, CONNECT_ONE_SHOT)
+
+func _on_soldier_at_blockade() -> void:
+	fight_timer = FIGHT_DURATION
 
 # ── Campaign end ──────────────────────────────────────────────────────────────
 
@@ -501,17 +584,18 @@ func _end_campaign() -> void:
 	campaign_ended = true
 	if preacher_node:
 		preacher_node.park()
+	if soldier_node:
+		soldier_node.park()
 
 	var pct   : float = float(converted_count) / float(TOTAL_VILLAGERS)
 	var stars : int
-	if pct >= 0.75:
+	if pct >= 0.80:
 		stars = 3
-	elif pct >= 0.40:
+	elif pct >= 0.50:
 		stars = 2
 	else:
 		stars = 1
 
-	# Store results — game.gd reads and applies these on return
 	GameData.campaign_result_believers = converted_count
 	GameData.campaign_result_stars     = stars
 
@@ -531,8 +615,7 @@ func _end_campaign() -> void:
 		star_str += "☆"
 	stars_lbl.text = star_str
 	stars_lbl.add_theme_color_override("font_color",
-		Color(0.96, 0.84, 0.16) if stars >= 2 else Color(0.50, 0.46, 0.36)
-	)
+		Color(0.96, 0.84, 0.16) if stars >= 2 else Color(0.50, 0.46, 0.36))
 
 	result_panel.visible = true
 

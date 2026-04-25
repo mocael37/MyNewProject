@@ -3,7 +3,7 @@ extends Node
 # ── Resources ───────────────────────────────────────────────────────────────
 var gold: int = 100
 var faith: int = 100        # start with 100
-var believers_count: int = 5
+var believers_count: int = 1
 
 # ── Wheel of Faith ──────────────────────────────────────────────────────────
 var wheel_available: bool = true
@@ -31,18 +31,18 @@ const WHEEL_SEGMENTS := [
 
 # ── Scene refs ──────────────────────────────────────────────────────────────
 var world: Node2D
-var shelter: Area2D
-var temple: Area2D = null
-var hall_of_devoted: Area2D = null
-var preacher_shelter_building: Area2D = null
-var ghost_node: Area2D = null
+var shelter: StaticBody2D
+var temple: StaticBody2D = null
+var hall_of_devoted: StaticBody2D = null
+var preacher_shelter_building: StaticBody2D = null
+var ghost_node: StaticBody2D = null
 var believers := []
 var preachers := []   # believer nodes that have been converted
 
 # ── UI refs ─────────────────────────────────────────────────────────────────
 # ── Armory / soldiers ────────────────────────────────────────────────────────
-var armory: Area2D = null
-var garrison: Area2D = null
+var armory: StaticBody2D = null
+var garrison: StaticBody2D = null
 var soldiers_count: int = 0
 var soldiers_in_garrison: int = 0
 var armory_built: bool = false
@@ -188,7 +188,7 @@ var crusade_pending: Dictionary = {}     # stores results between phase1 and pha
 var marcus_obtained: bool = false
 var hero_deck_chip: PanelContainer = null
 var hero_deck_panel: PanelContainer = null
-var generals_quarters: Area2D = null
+var generals_quarters: StaticBody2D = null
 var generals_quarters_built: bool = false
 var generals_quarters_build_row: HBoxContainer = null
 var generals_quarters_sep: Node = null
@@ -212,7 +212,7 @@ var placing_type      := ""    # "temple" / "hall_of_devoted" / "preacher_shelte
 var placing_cost      := 0
 
 # Active construction (one at a time)
-var active_construction_node: Area2D = null
+var active_construction_node: StaticBody2D = null
 var active_construction_type := ""
 var active_construction_timer := 0.0
 var active_construction_max   := 0.0
@@ -369,10 +369,10 @@ func _build_world():
 	world = Node2D.new()
 	add_child(world)
 
-	# Map background — painted grass + stone path texture
+	# Map background — tiled grass texture
 	var grass := TextureRect.new()
-	grass.texture      = load("res://New Background.png")
-	grass.stretch_mode = TextureRect.STRETCH_SCALE
+	grass.texture      = load("res://Background0.png")
+	grass.stretch_mode = TextureRect.STRETCH_TILE
 	grass.size         = Vector2(MAP_WIDTH, MAP_HEIGHT)
 	grass.mouse_filter = Control.MOUSE_FILTER_IGNORE   # don't block Area2D clicks
 	world.add_child(grass)
@@ -392,8 +392,6 @@ func _build_world():
 	# Scattered trees (avoid center area)
 	_plant_trees(rng)
 
-	# Dirt path disabled — background texture already has paths baked in
-	# _draw_path()
 
 	# Humble Shelter — interactive so you can tap it for capacity info
 	shelter = _make_building("shelter", SHELTER_POS, "Humble Shelter", true)
@@ -404,40 +402,64 @@ func _build_world():
 func _plant_trees(rng: RandomNumberGenerator):
 	var placed: Array = []
 	var attempts := 0
-	while placed.size() < 80 and attempts < 2000:
+	# Scatter trees (mix of Comp15 and Comp16)
+	while placed.size() < 55 and attempts < 2000:
 		attempts += 1
-		var tp := Vector2(rng.randf_range(60, MAP_WIDTH - 60), rng.randf_range(60, MAP_HEIGHT - 60))
-		# Keep clear zone around the village center
-		if tp.distance_to(SHELTER_POS) < 300:
+		var tp := Vector2(rng.randf_range(80, MAP_WIDTH - 80), rng.randf_range(80, MAP_HEIGHT - 80))
+		if tp.distance_to(SHELTER_POS) < 320:
 			continue
-		# Don't cluster trees too close together
 		var too_close := false
 		for p in placed:
-			if tp.distance_to(p) < 90:
+			if tp.distance_to(p) < 110:
 				too_close = true
 				break
 		if too_close:
 			continue
 		placed.append(tp)
-		_draw_tree(tp, rng)
-		blocked_zones.append({"pos": tp, "radius": 60.0})
+		_place_tree_sprite(tp, rng)
+		blocked_zones.append({"pos": tp, "radius": 70.0})
+	# Scatter rocks (Comp17)
+	var rock_placed: Array = []
+	attempts = 0
+	while rock_placed.size() < 18 and attempts < 1000:
+		attempts += 1
+		var rp := Vector2(rng.randf_range(80, MAP_WIDTH - 80), rng.randf_range(80, MAP_HEIGHT - 80))
+		if rp.distance_to(SHELTER_POS) < 300:
+			continue
+		var too_close := false
+		for p in placed:
+			if rp.distance_to(p) < 80:
+				too_close = true
+				break
+		for p in rock_placed:
+			if rp.distance_to(p) < 90:
+				too_close = true
+				break
+		if too_close:
+			continue
+		rock_placed.append(rp)
+		_place_rock_sprite(rp, rng)
+		blocked_zones.append({"pos": rp, "radius": 50.0})
 
 
-func _draw_tree(pos: Vector2, rng: RandomNumberGenerator):
-	var tree := Node2D.new()
-	tree.position = pos
-	var drawer := _TreeDrawer.new()
-	drawer.size_scale = rng.randf_range(0.80, 1.20)
-	drawer.green  = Color(
-		rng.randf_range(0.18, 0.26),
-		rng.randf_range(0.58, 0.68),
-		rng.randf_range(0.10, 0.18))
-	drawer.green2 = Color(
-		rng.randf_range(0.28, 0.38),
-		rng.randf_range(0.70, 0.82),
-		rng.randf_range(0.18, 0.28))
-	tree.add_child(drawer)
-	world.add_child(tree)
+func _place_tree_sprite(pos: Vector2, rng: RandomNumberGenerator):
+	var spr := Sprite2D.new()
+	spr.texture = load("res://Comp15.png" if rng.randi() % 2 == 0 else "res://Comp16.png")
+	var sc: float = rng.randf_range(0.26, 0.36)
+	spr.scale = Vector2(sc, sc)
+	spr.flip_h = rng.randi() % 2 == 1
+	spr.position = pos
+	world.add_child(spr)
+
+
+func _place_rock_sprite(pos: Vector2, rng: RandomNumberGenerator):
+	var spr := Sprite2D.new()
+	spr.texture = load("res://Comp17.png")
+	var sc: float = rng.randf_range(0.18, 0.26)
+	spr.scale = Vector2(sc, sc)
+	spr.flip_h = rng.randi() % 2 == 1
+	spr.position = pos
+	world.add_child(spr)
 
 
 func _road_corner(from_pos: Vector2, to_pos: Vector2) -> Vector2:
@@ -468,17 +490,9 @@ func _draw_road(from_pos: Vector2, to_pos: Vector2):
 	world.move_child(road, 1)  # just after grass, so road renders below trees and buildings
 
 
-func _draw_path():
-	# Stone tile cross-path centred on the shelter area
-	var path := Node2D.new()
-	path.position = SHELTER_POS + Vector2(0, 40)
-	var pd := _PathDrawer.new()
-	path.add_child(pd)
-	world.add_child(path)
 
-
-func _make_building(type: String, pos: Vector2, label: String, interactive: bool) -> Area2D:
-	var b := Area2D.new()
+func _make_building(type: String, pos: Vector2, label: String, interactive: bool) -> StaticBody2D:
+	var b := StaticBody2D.new()
 	b.set_script(load("res://building.gd"))
 	b.building_type  = type
 	b.building_label = label
@@ -493,11 +507,11 @@ func _make_building(type: String, pos: Vector2, label: String, interactive: bool
 func _spawn_believers():
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	for i in range(5):
+	for i in range(1):
 		var b: CharacterBody2D = load("res://believer.tscn").instantiate()
-		var offset := Vector2(rng.randf_range(-38, 38), rng.randf_range(-18, 18))
+		var offset := Vector2(rng.randf_range(-35, 35), rng.randf_range(-8, 8))
 		world.add_child(b)
-		b.setup(SHELTER_POS + offset, i)
+		b.setup(SHELTER_POS + Vector2(0, 80) + offset, i)
 		believers.append(b)
 
 
@@ -745,7 +759,7 @@ func _build_info_popup(ui: CanvasLayer):
 	info_popup.add_child(info_popup_label)
 
 
-func _show_building_info(building: Area2D, text: String):
+func _show_building_info(building: StaticBody2D, text: String):
 	info_popup_label.text = text
 	# canvas_transform maps world coords → screen coords (accounts for camera)
 	var screen_pos := get_viewport().get_canvas_transform() * building.global_position
@@ -893,6 +907,10 @@ func _build_build_menu(ui: CanvasLayer):
 	# Hide the separator line that _add_build_row added just before this row
 	generals_quarters_sep = list.get_child(generals_quarters_build_row.get_index() - 1)
 	generals_quarters_sep.visible = false
+	# Decorative buildings
+	_add_build_row(list, "Wishing Well",    "A beautiful well — purely\ndecorative for your village",   "25g", _on_build_well,       Color(0.35, 0.65, 0.90))
+	_add_build_row(list, "Pumpkin Garden",  "A fenced garden — adds\ncharm to your settlement",         "30g", _on_build_garden,     Color(0.55, 0.80, 0.25))
+	_add_build_row(list, "Stone Pool",      "A stone cistern — gives\nyour village a serene look",       "35g", _on_build_stone_pool, Color(0.50, 0.70, 0.85))
 
 	# Tutorial arrow — points at the temple row, pulses red, hidden once built
 	temple_build_indicator = Label.new()
@@ -1662,7 +1680,7 @@ func _on_extra_pray_confirm_pressed():
 		shelter_pos = extra_shelter_buildings[current_extra_shelter_idx - 1].position
 	else:
 		return
-	_start_prayer_session(current_extra_shelter_idx, shelter_pos, extra_pray_selector_count,
+	_start_prayer_session(current_extra_shelter_idx, shelter_pos + Vector2(0, 80), extra_pray_selector_count,
 		extra_pray_selector_row, extra_pray_progress_container, extra_pray_go_btn)
 
 
@@ -1698,7 +1716,7 @@ func _on_pray_cancel_pressed():
 
 
 func _on_pray_confirm_pressed():
-	_start_prayer_session(0, SHELTER_POS, prayer_selector_count,
+	_start_prayer_session(0, SHELTER_POS + Vector2(0, 80), prayer_selector_count,
 		pray_selector_row, pray_progress_container, pray_go_btn)
 	if tut_step == TutStep.CHOOSE_BELIEVERS:
 		tut_step = TutStep.COMPLETE
@@ -2310,6 +2328,9 @@ func _update_construction_ui():
 		"armory":           bname = "Barracks"
 		"garrison":         bname = "Garrison"
 		"shelter":          bname = "Believer Shelter"
+		"well":             bname = "Wishing Well"
+		"garden":           bname = "Pumpkin Garden"
+		"stone_pool":       bname = "Stone Pool"
 		_:                  bname = "Building"
 	construction_label.text = "%s — %d:%02d remaining" % [bname, mins, secs]
 	rush_button.disabled = faith < 1
@@ -2350,6 +2371,11 @@ func _update_tutorial():
 		tutorial_popup.visible = popup_showing
 		if popup_showing and tutorial_popup_text:
 			tutorial_popup_text.text = _tut_speech(tut_step)
+
+	# When PLACE_TEMPLE popup is dismissed, reveal the ghost and activate placement
+	if tut_step == TutStep.PLACE_TEMPLE and tut_popup_dismissed and ghost_node != null:
+		ghost_node.visible = true
+		placing_building   = true
 
 	# Arrows only appear after the popup for that step is dismissed
 	if rush_tutorial_arrow:
@@ -2491,6 +2517,16 @@ func _on_build_generals_quarters():
 	_try_start_placement("generals_quarters", 100)
 
 
+func _on_build_well():
+	_try_start_placement("well", 25)
+
+func _on_build_garden():
+	_try_start_placement("garden", 30)
+
+func _on_build_stone_pool():
+	_try_start_placement("stone_pool", 35)
+
+
 func _try_start_placement(type: String, cost: int):
 	if active_construction_timer > 0.0:
 		tutorial_label.text = "Finish the current construction first!"
@@ -2510,7 +2546,7 @@ func _try_start_placement(type: String, cost: int):
 func _start_placement(type: String):
 	placing_building = true
 	placing_type = type
-	ghost_node = Area2D.new()
+	ghost_node = StaticBody2D.new()
 	ghost_node.set_script(load("res://building.gd"))
 	ghost_node.building_type    = type
 	ghost_node.building_label   = ""
@@ -2524,6 +2560,9 @@ func _start_placement(type: String):
 		tut_popup_dismissed = false
 		if temple_build_indicator:
 			temple_build_indicator.visible = false
+		# Hide ghost until player dismisses the popup
+		ghost_node.visible = false
+		placing_building   = false
 		_update_tutorial()
 
 
@@ -2603,19 +2642,19 @@ func _complete_construction():
 		"temple":
 			temple = b
 			b.tapped.connect(_on_temple_tapped)
-			_draw_road(SHELTER_POS + Vector2(0, 40), b.position + Vector2(0, 48))
+			_draw_road(SHELTER_POS, b.position)
 			if tut_step == TutStep.RUSH_PROMPT:
 				tut_step = TutStep.TEMPLE_COMPLETE
 				tut_popup_dismissed = false
 				_update_tutorial()
 		"hall_of_devoted":
 			b.tapped.connect(_on_hall_tapped)
-			_draw_road(SHELTER_POS + Vector2(0, 40), b.position + Vector2(0, 20))
+			_draw_road(SHELTER_POS, b.position)
 			_reset_conversion_ui()
 		"preacher_shelter":
 			preacher_shelter_built = true
 			b.tapped.connect(_on_preacher_shelter_tapped)
-			_draw_road(hall_of_devoted.position + Vector2(0, 20), b.position + Vector2(0, 48))
+			_draw_road(hall_of_devoted.position, b.position)
 			# If a preacher was waiting at the hall, send them over now
 			if preacher_waiting_at_hall and converting_node != null:
 				preacher_waiting_at_hall = false
@@ -2623,12 +2662,12 @@ func _complete_construction():
 		"armory":
 			armory_built = true
 			b.tapped.connect(_on_armory_tapped)
-			_draw_road(SHELTER_POS + Vector2(0, 40), b.position + Vector2(0, 20))
+			_draw_road(SHELTER_POS, b.position)
 			_reset_training_ui()
 		"garrison":
 			garrison_built = true
 			b.tapped.connect(_on_garrison_tapped)
-			_draw_road(armory.position + Vector2(0, 20), b.position + Vector2(0, 48))
+			_draw_road(armory.position, b.position)
 			# If a soldier was waiting at the barracks, send them over now
 			if soldier_waiting_at_armory and training_node != null:
 				soldier_waiting_at_armory = false
@@ -2637,16 +2676,19 @@ func _complete_construction():
 			generals_quarters_built = true
 			generals_quarters = b
 			b.tapped.connect(_on_generals_quarters_tapped)
-			_draw_road(garrison.position + Vector2(0, 48), b.position + Vector2(0, 48))
+			_draw_road(garrison.position, b.position)
 			# Spawn Marcus wandering around his new quarters
 			var marcus_script := load("res://marcus_character.gd")
 			marcus_character_node = marcus_script.new()
 			world.add_child(marcus_character_node)
 			marcus_character_node.setup(b.position + Vector2(0, 20))
+		"well", "garden", "stone_pool":
+			var _b := b
+			b.tapped.connect(func(): _show_building_info(_b, _b.building_label))
 		"shelter":
 			believer_shelter_count += 1
 			believer_capacity = believer_shelter_count * 5
-			_draw_road(SHELTER_POS + Vector2(0, 40), b.position + Vector2(0, 48))
+			_draw_road(SHELTER_POS, b.position)
 			var shelter_ref := b
 			extra_shelter_buildings.append(b)
 			b.tapped.connect(func():
@@ -2774,7 +2816,7 @@ func _on_preacher_arrived_at_shelter():
 		preacher_waiting_at_hall = false
 		converting_node.needs_shelter = false
 		converting_node.start_wandering(
-			preacher_shelter_building.position + Vector2(randf_range(-35, 35), randf_range(-18, 18)))
+			preacher_shelter_building.position + Vector2(randf_range(-35, 35), 80 + randf_range(-8, 8)))
 		converting_node = null
 	_reset_conversion_ui()
 
@@ -2905,9 +2947,9 @@ func _complete_spread():
 				spawn_pos = extra_shelter_buildings[shelter_idx - 1].position
 			else:
 				spawn_pos = SHELTER_POS
-			var offset := Vector2(rng.randf_range(-38, 38), rng.randf_range(-18, 18))
+			var offset := Vector2(rng.randf_range(-35, 35), rng.randf_range(-8, 8))
 			world.add_child(b)
-			b.setup(spawn_pos + offset, believers.size())
+			b.setup(spawn_pos + Vector2(0, 80) + offset, believers.size())
 			believers.append(b)
 
 
@@ -2961,7 +3003,7 @@ func _on_soldier_arrived_at_garrison():
 		soldier_waiting_at_armory = false
 		training_node.needs_shelter = false
 		training_node.start_wandering(
-			garrison.position + Vector2(randf_range(-35, 35), randf_range(-18, 18)))
+			garrison.position + Vector2(randf_range(-35, 35), 80 + randf_range(-8, 8)))
 		training_node = null
 	_reset_training_ui()
 
@@ -3310,167 +3352,49 @@ func _refresh_resource_labels():
 		_refresh_people_panel()
 
 
-# ── Inner draw helpers (no separate files needed) ─────────────────────────────
-class _TreeDrawer extends Node2D:
-	var size_scale: float = 1.0   # varied per tree instance
-	var green:      Color  = Color(0.22, 0.62, 0.12)
-	var green2:     Color  = Color(0.32, 0.76, 0.20)
-
-	func _draw():
-		var s := size_scale
-		var OUTLINE := Color(0.08, 0.04, 0.01)
-		var TRUNK   := Color(0.50, 0.28, 0.10)
-		var TRUNK_D := Color(0.36, 0.18, 0.06)
-		var STONE   := Color(0.68, 0.62, 0.50)
-		var STONE_D := Color(0.54, 0.48, 0.38)
-
-		# ── Stone base ──────────────────────────────────────
-		# Outline
-		draw_colored_polygon(_ellipse_pts(Vector2(0, 8*s), 26*s, 8*s, 8), OUTLINE)
-		# Stone platform
-		draw_colored_polygon(_ellipse_pts(Vector2(0, 8*s), 23*s, 8*s, 8), STONE)
-		# Stone tile lines
-		for i in range(4):
-			var a := i * PI / 4
-			draw_line(
-				Vector2(0, 8*s),
-				Vector2(cos(a)*22*s, 8*s + sin(a)*7*s),
-				STONE_D, 1.0)
-		draw_colored_polygon(_ellipse_pts(Vector2(0, 8*s), 5*s, 4*s, 6), STONE_D)
-
-		# ── Trunk ────────────────────────────────────────────
-		# Flared base outline
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(-14*s, 8*s), Vector2(14*s, 8*s),
-			Vector2(8*s, -18*s), Vector2(-8*s, -18*s)
-		]), OUTLINE)
-		# Trunk fill (trapezoid — wide base, narrow top)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(-12*s, 7*s), Vector2(12*s, 7*s),
-			Vector2(6*s, -17*s), Vector2(-6*s, -17*s)
-		]), TRUNK)
-		# Trunk shadow stripe
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(4*s, 7*s), Vector2(10*s, 7*s),
-			Vector2(4*s, -17*s), Vector2(2*s, -17*s)
-		]), TRUNK_D)
-		# Root flares
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(-12*s,7*s), Vector2(-20*s,10*s), Vector2(-14*s,2*s)
-		]), TRUNK)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(12*s,7*s), Vector2(20*s,10*s), Vector2(14*s,2*s)
-		]), TRUNK)
-		draw_polyline(PackedVector2Array([
-			Vector2(-12*s,7*s), Vector2(-20*s,10*s), Vector2(-14*s,2*s)
-		]), OUTLINE, 1.2)
-		draw_polyline(PackedVector2Array([
-			Vector2(12*s,7*s), Vector2(20*s,10*s), Vector2(14*s,2*s)
-		]), OUTLINE, 1.2)
-
-		# ── Crown — 5 overlapping circles for scalloped edges ──
-		# Draw all outlines first (slightly larger, dark)
-		var blobs := [
-			[Vector2(-18*s, -30*s), 20*s],   # left
-			[Vector2( 18*s, -30*s), 20*s],   # right
-			[Vector2(-10*s, -44*s), 22*s],   # upper-left
-			[Vector2( 10*s, -44*s), 22*s],   # upper-right
-			[Vector2(  0*s, -54*s), 22*s],   # top center
-		]
-		for b in blobs:
-			draw_colored_polygon(_circle_pts(b[0], b[1]+3, 14), OUTLINE)
-		# Fill with base green
-		for b in blobs:
-			draw_colored_polygon(_circle_pts(b[0], b[1], 14), green)
-		# Top blob brighter (sunlit top)
-		draw_colored_polygon(_circle_pts(Vector2(0, -54*s), 20*s, 14), green2)
-		draw_colored_polygon(_circle_pts(Vector2(-8*s, -58*s), 12*s, 12), green2.lightened(0.15))
-		# Small shine spot
-		draw_colored_polygon(_circle_pts(Vector2(-10*s, -62*s), 5*s, 8),
-			Color(1.0, 1.0, 1.0, 0.30))
-
-	func _circle_pts(center: Vector2, r: float, n: int) -> PackedVector2Array:
-		var pts := PackedVector2Array()
-		for i in range(n):
-			var a = i * TAU / n
-			pts.append(center + Vector2(cos(a) * r, sin(a) * r))
-		return pts
-
-	func _ellipse_pts(center: Vector2, rx: float, ry: float, n: int) -> PackedVector2Array:
-		var pts := PackedVector2Array()
-		for i in range(n):
-			var a = i * TAU / n
-			pts.append(center + Vector2(cos(a) * rx, sin(a) * ry))
-		return pts
-
-
-class _PathDrawer extends Node2D:
-	const DIRT    = Color(0.72, 0.56, 0.34)
-	const DIRT2   = Color(0.62, 0.48, 0.28)
-	const OUTLINE = Color(0.10, 0.05, 0.02)
-
-	func _draw():
-		# Soft shadow under path
-		draw_rect(Rect2(-163, -18, 326, 48), Color(0,0,0,0.12))
-		draw_rect(Rect2(-18, -118, 46, 204), Color(0,0,0,0.12))
-
-		# Dirt path — horizontal
-		draw_rect(Rect2(-162, -20, 324, 42), OUTLINE)
-		draw_rect(Rect2(-160, -18, 320, 38), DIRT)
-		# Dirt texture lines
-		for i in range(6):
-			draw_line(Vector2(-150+i*52, -16), Vector2(-130+i*52, 16), DIRT2, 1.5)
-
-		# Dirt path — vertical
-		draw_rect(Rect2(-20, -120, 42, 202), OUTLINE)
-		draw_rect(Rect2(-18, -118, 38, 198), DIRT)
-		for i in range(5):
-			draw_line(Vector2(-16, -108+i*40), Vector2(16, -88+i*40), DIRT2, 1.5)
 
 
 class _RoadSegment extends Node2D:
-	const DIRT    = Color(0.72, 0.56, 0.34)
-	const DIRT2   = Color(0.62, 0.48, 0.28)
-	const OUTLINE = Color(0.10, 0.05, 0.02)
-	const WIDTH   = 38.0
+	const ROAD_H  := 72.0
+	const TEX_SZ  := 512.0
 	var from_pos: Vector2
-	var to_pos: Vector2
+	var to_pos:   Vector2
 
-	func _draw_segment(a: Vector2, b: Vector2):
-		if a.distance_to(b) < 1.0:
+	func _ready():
+		if to_pos.y < from_pos.y - 20.0:
+			# Destination is above — exit south from door first, then horizontal, then north
+			const EXIT_SOUTH := 60.0
+			var road_y: float = from_pos.y + EXIT_SOUTH
+			var p1 := Vector2(from_pos.x, road_y)
+			var p2 := Vector2(to_pos.x,   road_y)
+			_place_seg(from_pos, p1)
+			_place_seg(p1, p2)
+			_place_seg(p2, to_pos)
+		else:
+			# Destination is at same level or below — simple vertical-first L
+			var corner := Vector2(from_pos.x, to_pos.y)
+			_place_seg(from_pos, corner)
+			_place_seg(corner, to_pos)
+
+	func _place_seg(a: Vector2, b: Vector2):
+		if a.distance_to(b) < 4.0:
 			return
-		var dir: Vector2  = (b - a).normalized()
-		var perp: Vector2 = Vector2(-dir.y, dir.x)
-		draw_line(a, b, OUTLINE, WIDTH + 4)
-		draw_line(a, b, DIRT, WIDTH)
-		var n: int = int(a.distance_to(b) / 22.0)
-		for i in range(1, n + 1):
-			var c: Vector2 = a + dir * (float(i) * 22.0)
-			draw_line(c - perp * (WIDTH * 0.4), c + perp * (WIDTH * 0.4), DIRT2, 1.5)
+		var dir: Vector2 = (b - a).normalized()
+		var ext: float = ROAD_H * 0.5
+		var a2: Vector2 = a - dir * ext
+		var b2: Vector2 = b + dir * ext
+		var length: float = a2.distance_to(b2)
+		var horizontal: bool = abs(b.x - a.x) > abs(b.y - a.y)
+		var tex: Texture2D = load("res://Comp14.png" if horizontal else "res://Comp13.png")
+		var spr := Sprite2D.new()
+		spr.texture = tex
+		if horizontal:
+			spr.scale = Vector2(length / TEX_SZ, ROAD_H / TEX_SZ)
+		else:
+			spr.scale = Vector2(ROAD_H / TEX_SZ, length / TEX_SZ)
+		spr.position = (a2 + b2) * 0.5
+		add_child(spr)
 
-	func _draw():
-		# Choose corner direction: go along the longer axis first for a natural path
-		var dx: float = abs(to_pos.x - from_pos.x)
-		var dy: float = abs(to_pos.y - from_pos.y)
-		var corner: Vector2 = Vector2(from_pos.x, to_pos.y) if dy >= dx else Vector2(to_pos.x, from_pos.y)
-		_draw_segment(from_pos, corner)
-		_draw_segment(corner, to_pos)
-		# Fill the corner junction so there's no gap
-		draw_rect(Rect2(corner - Vector2(WIDTH / 2 + 2, WIDTH / 2 + 2), Vector2(WIDTH + 4, WIDTH + 4)), OUTLINE)
-		draw_rect(Rect2(corner - Vector2(WIDTH / 2, WIDTH / 2), Vector2(WIDTH, WIDTH)), DIRT)
-
-
-class _GrassPatch extends Node2D:
-	var rx: float  = 40.0
-	var ry: float  = 24.0
-	var col: Color = Color(0.45, 0.78, 0.30, 0.55)
-
-	func _draw():
-		var pts := PackedVector2Array()
-		for i in range(16):
-			var a = i * TAU / 16
-			pts.append(Vector2(cos(a) * rx, sin(a) * ry))
-		draw_colored_polygon(pts, col)
 
 
 class _WheelSpinner extends Node2D:

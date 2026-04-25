@@ -1,4 +1,4 @@
-extends Area2D
+extends StaticBody2D
 
 var building_type: String = "shelter"
 var building_label: String = ""
@@ -13,17 +13,37 @@ var _sprite: Sprite2D = null
 
 # Map building type → texture path for PNG buildings
 const PNG_BUILDINGS := {
-	"temple":             "res://Temple.png",
+	"temple":             "res://Comp6.png",
 	"generals_quarters":  "res://Marcus Habitat.png",
-	"shelter":            "res://Beliver shelter.png",
+	"shelter":            "res://Comp1.png",
+	"hall_of_devoted":    "res://Comp5.png",
+	"preacher_shelter":   "res://Comp2.png",
+	"armory":             "res://Comp4.png",
+	"garrison":           "res://Comp3.png",
+	"well":               "res://Comp8.png",
+	"garden":             "res://Comp7.png",
+	"stone_pool":         "res://Comp10.png",
+}
+
+const BUILDING_TARGET_W := {
+	"temple":             180.0,
+	"generals_quarters":  140.0,
+	"shelter":            155.0,
+	"hall_of_devoted":    170.0,
+	"preacher_shelter":   155.0,
+	"armory":             165.0,
+	"garrison":           170.0,
+	"well":               100.0,
+	"garden":             130.0,
+	"stone_pool":         110.0,
 }
 
 func _ready():
 	input_pickable = true
 	var shape = CollisionShape2D.new()
 	var rect = RectangleShape2D.new()
-	rect.size = Vector2(120, 110)
-	shape.position = Vector2(0, -20)
+	rect.size = Vector2(100, 70)
+	shape.position = Vector2(0, -52)
 	shape.shape = rect
 	add_child(shape)
 	input_event.connect(_on_input_event)
@@ -37,8 +57,7 @@ func _setup_png_sprite():
 		return
 	_sprite = Sprite2D.new()
 	_sprite.texture = tex
-	# Scale so the building is 140px wide
-	var target_w := 140.0
+	var target_w: float = BUILDING_TARGET_W.get(building_type, 155.0)
 	var sc := target_w / float(tex.get_width())
 	_sprite.scale = Vector2(sc, sc)
 	# Anchor base of sprite to node origin
@@ -46,13 +65,14 @@ func _setup_png_sprite():
 	_sprite.position = Vector2(0, -scaled_h * 0.5 + 18.0)
 	_sprite.visible = not has_meta("under_construction")
 	add_child(_sprite)
-	# Resize collision shape to match the sprite bounds
+	# Resize collision to upper body only — leaves door area at bottom open
 	for child in get_children():
 		if child is CollisionShape2D:
 			var col_rect := RectangleShape2D.new()
-			col_rect.size = Vector2(target_w, scaled_h)
+			var block_h := scaled_h * 0.55
+			col_rect.size = Vector2(target_w * 0.82, block_h)
 			child.shape = col_rect
-			child.position = _sprite.position
+			child.position = Vector2(0, _sprite.position.y - scaled_h * 0.22)
 			break
 
 func _on_input_event(_viewport, event, _shape_idx):

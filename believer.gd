@@ -15,6 +15,9 @@ signal reached_forced_target
 
 var needs_shelter: bool = false   # draw "house" icon when true
 
+var _stuck_timer: float = 0.0
+var _prev_pos: Vector2 = Vector2.ZERO
+
 # Visuals — set via setup()
 var skin_color: Color
 var hair_color: Color
@@ -23,8 +26,8 @@ var pants_color: Color
 
 var anim_sprite: AnimatedSprite2D
 
-const FRAME_W := 120
-const FRAME_H := 150
+const FRAME_W := 68
+const FRAME_H := 96
 
 # 5 distinct regular villager looks
 const VARIANTS = [
@@ -83,19 +86,23 @@ func _ready():
 	_setup_anim_sprite()
 
 func _setup_anim_sprite():
-	var texture = load("res://believer_sheet_clean.png")
+	if is_preacher or is_soldier:
+		return
+	if anim_sprite != null:
+		return
+	var texture = load("res://believer_sheet_v2.png")
 	if texture == null:
 		return
 
 	var frames = SpriteFrames.new()
 
 	# [animation_name, row_index, frame_count, fps]
-	# walk_left reuses row 0 (walk_right) — we flip_h in code
+	# Row 0: walk toward (front), Row 2: side profile (flip_h for left), Row 3: walk away
 	var anims = [
-		["walk_right",  0, 6, 8],
-		["walk_away",   1, 6, 8],
-		["walk_toward", 2, 6, 6],
-		["idle",        3, 6, 4],
+		["walk_toward", 0, 10, 8],
+		["walk_right",  2, 10, 8],
+		["walk_away",   3, 10, 8],
+		["idle",        0,  1, 4],
 	]
 
 	for anim in anims:
@@ -110,16 +117,16 @@ func _setup_anim_sprite():
 			var atlas = AtlasTexture.new()
 			atlas.atlas = texture
 			atlas.region = Rect2(i * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+			atlas.filter_clip = true
 			frames.add_frame(anim_name, atlas)
 
 	anim_sprite = AnimatedSprite2D.new()
 	anim_sprite.sprite_frames = frames
-	# Scale: frame is 125x100, scale 0.6 gives ~60px tall character
-	anim_sprite.scale = Vector2(0.4, 0.4)
+	# 86x96px frame at scale 0.6 gives ~52x58px display size (only 1.7x downscale — no ghosting)
+	anim_sprite.scale = Vector2(0.6, 0.6)
 	# Offset up so feet sit at the character's ground point
-	anim_sprite.position = Vector2(0, -30)
-	# Use linear filtering for smooth illustrated art
-	anim_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	anim_sprite.position = Vector2(0, -29)
+	anim_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(anim_sprite)
 	anim_sprite.play("idle")
 
@@ -140,7 +147,8 @@ func _physics_process(_delta):
 		velocity = diff.normalized() * move_speed
 		move_and_slide()
 		_update_anim(velocity)
-		queue_redraw()
+		if is_preacher or is_soldier:
+			queue_redraw()
 		return
 
 	if is_waiting:
@@ -154,10 +162,11 @@ func _physics_process(_delta):
 		return
 
 	var diff = target_pos - position
-	if diff.length() < 4.0:
+	if diff.length() < 12.0:
 		is_waiting = true
 		wait_timer = randf_range(1.5, 4.5)
 		velocity = Vector2.ZERO
+		_stuck_timer = 0.0
 	else:
 		if is_preacher or is_soldier:
 			if abs(diff.x) > 2:
@@ -165,26 +174,37 @@ func _physics_process(_delta):
 		velocity = diff.normalized() * move_speed
 
 	move_and_slide()
+
+	# Repick target if pinned against a building wall
+	var moved := position.distance_to(_prev_pos)
+	if moved < 0.5 and velocity.length() > 1.0:
+		_stuck_timer += _delta
+		if _stuck_timer > 1.5:
+			_pick_target()
+			_stuck_timer = 0.0
+	else:
+		_stuck_timer = 0.0
+	_prev_pos = position
+
 	_update_anim(velocity)
-	queue_redraw()
+	if is_preacher or is_soldier:
+		queue_redraw()
 
 
 func _update_anim(vel: Vector2):
 	if anim_sprite == null or is_preacher or is_soldier:
 		return
+	var new_anim: String
 	if vel.length() < 5.0:
-		anim_sprite.play("idle")
-		return
-	# Pick direction based on dominant axis
-	if abs(vel.x) >= abs(vel.y):
-		anim_sprite.play("walk_right")
-		anim_sprite.flip_h = vel.x < 0   # flip for left
+		new_anim = "idle"
+	elif abs(vel.x) >= abs(vel.y):
+		anim_sprite.flip_h = vel.x > 0
+		new_anim = "walk_right"
 	else:
 		anim_sprite.flip_h = false
-		if vel.y > 0:
-			anim_sprite.play("walk_toward")
-		else:
-			anim_sprite.play("walk_away")
+		new_anim = "walk_toward" if vel.y > 0 else "walk_away"
+	if anim_sprite.animation != new_anim:
+		anim_sprite.play(new_anim)
 
 
 func walk_to(pos: Vector2):
