@@ -558,9 +558,10 @@ func _tick_fight(delta: float) -> void:
 	var sp : Vector2 = ct * BLOCKADE_POS
 	fight_label.position = sp + Vector2(-38.0, -58.0)
 	if fight_timer <= 0.0:
-		soldier_fighting    = false
-		blockade_alive      = false
-		fight_label.visible = false
+		soldier_fighting         = false
+		blockade_alive           = false
+		fight_label.visible      = false
+		soldier_node.is_attacking = false
 		queue_redraw()
 		soldier_node.park()
 		for g in blockade_guards:
@@ -570,11 +571,20 @@ func _tick_fight(delta: float) -> void:
 func _send_soldier_to_blockade() -> void:
 	soldier_fighting    = true
 	fight_label.visible = true
-	soldier_node.walk_to(BLOCKADE_POS)
+	# Stop 130px left — leaves a visible gap from the left guard at -78
+	soldier_node.walk_to(BLOCKADE_POS + Vector2(-130.0, 0.0))
 	soldier_node.reached_forced_target.connect(_on_soldier_at_blockade, CONNECT_ONE_SHOT)
 
 func _on_soldier_at_blockade() -> void:
 	fight_timer = FIGHT_DURATION
+	# Park soldier, force flip_h=false so attack row (naturally faces right) shows correctly
+	soldier_node.park()
+	soldier_node.call("set_attack_flip", false)  # flip_h=false → attack faces right toward guards
+	soldier_node.is_attacking = true
+	# Guards stay in place — scale.x=-1 + flip_h=false already faces them left toward soldier
+	for g in blockade_guards:
+		g.call("set_attack_flip", false)
+		g.is_attacking = true
 
 # ── Campaign end ──────────────────────────────────────────────────────────────
 

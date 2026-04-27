@@ -7,6 +7,7 @@ var wait_timer: float = 0.0
 var is_waiting: bool = false
 var is_preacher: bool = false   # set true when converted
 var is_soldier: bool = false    # set true when trained
+var is_attacking: bool = false  # set true while soldier fights blockade
 
 # Forced movement — walk to a specific position, emit signal on arrival
 var has_forced_target: bool = false
@@ -28,6 +29,10 @@ var anim_sprite: AnimatedSprite2D
 
 const FRAME_W := 68
 const FRAME_H := 96
+
+const SOLDIER_FRAME_W := 68
+const SOLDIER_FRAME_H := 96
+const SOLDIER_COLS    := 10
 
 # 5 distinct regular villager looks
 const VARIANTS = [
@@ -86,25 +91,48 @@ func _ready():
 	_setup_anim_sprite()
 
 func _setup_anim_sprite():
-	if is_preacher or is_soldier:
+	if is_preacher:
 		return
 	if anim_sprite != null:
 		return
-	var texture = load("res://believer_sheet_v2.png")
+
+	var texture: Texture2D
+	var fw: int
+	var fh: int
+	var anims: Array
+
+	if is_soldier:
+		# Load as Image (no mipmaps) so bilinear filter can't bleed across frame boundaries
+		var img := Image.load_from_file("res://soldier_sheet.png")
+		if img == null:
+			return
+		texture = ImageTexture.create_from_image(img)
+		fw = SOLDIER_FRAME_W
+		fh = SOLDIER_FRAME_H
+		# Row 0: Walk Toward, Row 1: Walk Right, Row 2: Walk Away, Row 3: Idle, Row 4: Attack
+		anims = [
+			["walk_toward", 0, SOLDIER_COLS, 8],
+			["walk_right",  1, SOLDIER_COLS, 8],
+			["walk_away",   2, SOLDIER_COLS, 8],
+			["idle",        3, SOLDIER_COLS, 4],
+			["attack",      4, SOLDIER_COLS, 10],
+		]
+	else:
+		texture = load("res://believer_sheet_v2.png")
+		fw = FRAME_W
+		fh = FRAME_H
+		# Row 0: walk toward (front), Row 2: side profile, Row 3: walk away
+		anims = [
+			["walk_toward", 0, 10, 8],
+			["walk_right",  2, 10, 8],
+			["walk_away",   3, 10, 8],
+			["idle",        0,  1, 4],
+		]
+
 	if texture == null:
 		return
 
 	var frames = SpriteFrames.new()
-
-	# [animation_name, row_index, frame_count, fps]
-	# Row 0: walk toward (front), Row 2: side profile (flip_h for left), Row 3: walk away
-	var anims = [
-		["walk_toward", 0, 10, 8],
-		["walk_right",  2, 10, 8],
-		["walk_away",   3, 10, 8],
-		["idle",        0,  1, 4],
-	]
-
 	for anim in anims:
 		var anim_name: String = anim[0]
 		var row: int = anim[1]
@@ -116,15 +144,13 @@ func _setup_anim_sprite():
 		for i in range(count):
 			var atlas = AtlasTexture.new()
 			atlas.atlas = texture
-			atlas.region = Rect2(i * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
+			atlas.region = Rect2(i * fw, row * fh, fw, fh)
 			atlas.filter_clip = true
 			frames.add_frame(anim_name, atlas)
 
 	anim_sprite = AnimatedSprite2D.new()
 	anim_sprite.sprite_frames = frames
-	# 86x96px frame at scale 0.6 gives ~52x58px display size (only 1.7x downscale — no ghosting)
 	anim_sprite.scale = Vector2(0.6, 0.6)
-	# Offset up so feet sit at the character's ground point
 	anim_sprite.position = Vector2(0, -29)
 	anim_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(anim_sprite)
@@ -134,7 +160,7 @@ func _physics_process(_delta):
 	# Forced walk overrides everything
 	if has_forced_target:
 		var diff = forced_target - position
-		if is_preacher or is_soldier:
+		if is_preacher:
 			if abs(diff.x) > 2:
 				scale.x = sign(diff.x)
 		if diff.length() < 10.0:
@@ -145,7 +171,11 @@ func _physics_process(_delta):
 			reached_forced_target.emit()
 			return
 		velocity = diff.normalized() * move_speed
+		var pos_before := position
 		move_and_slide()
+		# If physically blocked by a building, force-advance so forced path always completes
+		if position.distance_to(pos_before) < 0.5:
+			position += velocity * _delta
 		_update_anim(velocity)
 		if is_preacher or is_soldier:
 			queue_redraw()
@@ -168,7 +198,7 @@ func _physics_process(_delta):
 		velocity = Vector2.ZERO
 		_stuck_timer = 0.0
 	else:
-		if is_preacher or is_soldier:
+		if is_preacher:
 			if abs(diff.x) > 2:
 				scale.x = sign(diff.x)
 		velocity = diff.normalized() * move_speed
@@ -192,10 +222,12 @@ func _physics_process(_delta):
 
 
 func _update_anim(vel: Vector2):
-	if anim_sprite == null or is_preacher or is_soldier:
+	if anim_sprite == null or is_preacher:
 		return
 	var new_anim: String
-	if vel.length() < 5.0:
+	if is_attacking:
+		new_anim = "attack"
+	elif vel.length() < 5.0:
 		new_anim = "idle"
 	elif abs(vel.x) >= abs(vel.y):
 		anim_sprite.flip_h = vel.x > 0
@@ -206,6 +238,17 @@ func _update_anim(vel: Vector2):
 	if anim_sprite.animation != new_anim:
 		anim_sprite.play(new_anim)
 
+
+func set_attack_flip(flipped: bool) -> void:
+	if anim_sprite != null:
+		anim_sprite.flip_h = flipped
+
+func convert_to_soldier() -> void:
+	is_soldier = true
+	if anim_sprite != null:
+		anim_sprite.queue_free()
+		anim_sprite = null
+	_setup_anim_sprite()
 
 func walk_to(pos: Vector2):
 	forced_target = pos
@@ -234,10 +277,11 @@ func _pick_target():
 	target_pos = home_pos + Vector2(cos(angle), sin(angle)) * radius
 
 func _draw():
-	# Believers use AnimatedSprite2D — only draw for preachers and soldiers
 	if is_soldier:
-		_draw_soldier()
-	elif is_preacher:
+		if anim_sprite == null:
+			_draw_soldier()
+		return
+	if is_preacher:
 		_draw_preacher()
 
 

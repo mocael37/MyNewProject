@@ -3,7 +3,7 @@ extends Node
 # ── Resources ───────────────────────────────────────────────────────────────
 var gold: int = 100
 var faith: int = 100        # start with 100
-var believers_count: int = 1
+var believers_count: int = 5
 
 # ── Wheel of Faith ──────────────────────────────────────────────────────────
 var wheel_available: bool = true
@@ -463,23 +463,36 @@ func _place_rock_sprite(pos: Vector2, rng: RandomNumberGenerator):
 
 
 func _road_corner(from_pos: Vector2, to_pos: Vector2) -> Vector2:
-	if abs(to_pos.y - from_pos.y) >= abs(to_pos.x - from_pos.x):
-		return Vector2(from_pos.x, to_pos.y)
-	else:
-		return Vector2(to_pos.x, from_pos.y)
+	return Vector2(from_pos.x, to_pos.y)
 
 
 func _walk_via_road(node: CharacterBody2D, from_pos: Vector2, to_pos: Vector2, on_arrive: Callable):
-	var corner := _road_corner(from_pos, to_pos)
-	if corner.distance_to(to_pos) < 4.0 or corner.distance_to(from_pos) < 4.0:
-		node.walk_to(to_pos)
-		node.reached_forced_target.connect(on_arrive, CONNECT_ONE_SHOT)
-	else:
-		node.walk_to(corner)
+	# Mirror _RoadSegment._ready() exactly so characters follow the visual road
+	if to_pos.y < from_pos.y - 20.0:
+		# Destination is above — exit south first, then horizontal, then north (same as visual road)
+		var road_y := from_pos.y + 60.0
+		var p1 := Vector2(from_pos.x, road_y)
+		var p2 := Vector2(to_pos.x, road_y)
+		node.walk_to(p1)
 		node.reached_forced_target.connect(func():
+			node.walk_to(p2)
+			node.reached_forced_target.connect(func():
+				node.walk_to(to_pos)
+				node.reached_forced_target.connect(on_arrive, CONNECT_ONE_SHOT)
+			, CONNECT_ONE_SHOT)
+		, CONNECT_ONE_SHOT)
+	else:
+		# Destination at same level or below — vertical-first L
+		var corner := Vector2(from_pos.x, to_pos.y)
+		if corner.distance_to(to_pos) < 4.0 or corner.distance_to(from_pos) < 4.0:
 			node.walk_to(to_pos)
 			node.reached_forced_target.connect(on_arrive, CONNECT_ONE_SHOT)
-		, CONNECT_ONE_SHOT)
+		else:
+			node.walk_to(corner)
+			node.reached_forced_target.connect(func():
+				node.walk_to(to_pos)
+				node.reached_forced_target.connect(on_arrive, CONNECT_ONE_SHOT)
+			, CONNECT_ONE_SHOT)
 
 
 func _draw_road(from_pos: Vector2, to_pos: Vector2):
@@ -507,7 +520,7 @@ func _make_building(type: String, pos: Vector2, label: String, interactive: bool
 func _spawn_believers():
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	for i in range(1):
+	for i in range(5):
 		var b: CharacterBody2D = load("res://believer.tscn").instantiate()
 		var offset := Vector2(rng.randf_range(-35, 35), rng.randf_range(-8, 8))
 		world.add_child(b)
@@ -1742,42 +1755,26 @@ func _start_prayer_session(shelter_idx: int, home_pos: Vector2, wanted: int,
 		var spread_x := (sent - (wanted - 1) * 0.5) * 18.0
 		var target := temple.position + Vector2(spread_x, 48)
 		if shelter_idx == 0:
-			# Main shelter → temple (single L-corner)
-			var door: Vector2 = home_pos + Vector2(0, 40)
-			var corner := _road_corner(door, target)
-			if corner.distance_to(target) > 4.0 and corner.distance_to(door) > 4.0:
-				b.walk_to(corner)
-				b.reached_forced_target.connect(func(): b.walk_to(target), CONNECT_ONE_SHOT)
-			else:
-				b.walk_to(target)
+			# Step 1: walk to shelter exit (clears building collision)
+			# Step 2: _walk_via_road handles EXIT_SOUTH or L-corner to temple
+			var shelter_exit := home_pos
+			var _b: CharacterBody2D = b
+			var _target: Vector2 = target
+			b.walk_to(shelter_exit)
+			b.reached_forced_target.connect(func():
+				_walk_via_road(_b, shelter_exit, _target, func(): pass)
+			, CONNECT_ONE_SHOT)
 		else:
-			# Extra shelter → main shelter door → temple (two legs via existing roads)
-			var extra_door: Vector2 = home_pos + Vector2(0, 48)
-			var c1 := _road_corner(extra_door, shelter_door)
-			var c2 := _road_corner(shelter_door, target)
-			# Chain: extra_door (→ c1) → shelter_door (→ c2) → target
-			var _target := target
-			if c1.distance_to(shelter_door) > 4.0 and c1.distance_to(extra_door) > 4.0:
-				b.walk_to(c1)
-				b.reached_forced_target.connect(func():
-					b.walk_to(shelter_door)
-					b.reached_forced_target.connect(func():
-						if c2.distance_to(_target) > 4.0 and c2.distance_to(shelter_door) > 4.0:
-							b.walk_to(c2)
-							b.reached_forced_target.connect(func(): b.walk_to(_target), CONNECT_ONE_SHOT)
-						else:
-							b.walk_to(_target)
-					, CONNECT_ONE_SHOT)
-				, CONNECT_ONE_SHOT)
-			else:
-				b.walk_to(shelter_door)
-				b.reached_forced_target.connect(func():
-					if c2.distance_to(_target) > 4.0 and c2.distance_to(shelter_door) > 4.0:
-						b.walk_to(c2)
-						b.reached_forced_target.connect(func(): b.walk_to(_target), CONNECT_ONE_SHOT)
-					else:
-						b.walk_to(_target)
-				, CONNECT_ONE_SHOT)
+			# Extra shelter → main shelter door → temple
+			var extra_exit := home_pos
+			var _b: CharacterBody2D = b
+			var _target: Vector2 = target
+			b.walk_to(extra_exit)
+			b.reached_forced_target.connect(func():
+				_walk_via_road(_b, extra_exit, shelter_door, func():
+					_walk_via_road(_b, shelter_door, _target, func(): pass)
+				)
+			, CONNECT_ONE_SHOT)
 		sent += 1
 	# Hide after walk time — use full path length for extra shelters
 	var temple_center := temple.position + Vector2(0, 48)
@@ -2267,6 +2264,23 @@ func _build_tutorial_panel(ui: CanvasLayer):
 	wheel_tutorial_arrow.add_child(_wa_lbl)
 	ui.add_child(wheel_tutorial_arrow)
 
+	# Floating toast label for quick error feedback ("not enough gold", etc.)
+	tutorial_label = Label.new()
+	tutorial_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	tutorial_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	tutorial_label.offset_top    = 52
+	tutorial_label.offset_bottom = 80
+	tutorial_label.offset_left   = -300
+	tutorial_label.offset_right  =  300
+	tutorial_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tutorial_label.add_theme_font_size_override("font_size", 14)
+	tutorial_label.add_theme_color_override("font_color", Color(1.0, 0.30, 0.20))
+	tutorial_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+	tutorial_label.add_theme_constant_override("shadow_offset_x", 1)
+	tutorial_label.add_theme_constant_override("shadow_offset_y", 1)
+	tutorial_label.text = ""
+	ui.add_child(tutorial_label)
+
 
 func _build_construction_panel(ui: CanvasLayer):
 	construction_panel = PanelContainer.new()
@@ -2363,6 +2377,8 @@ func _update_conversion_ui():
 
 # ── Tutorial logic ────────────────────────────────────────────────────────────
 func _update_tutorial():
+	if tutorial_label:
+		tutorial_label.text = ""
 	var popup_showing: bool = !tut_popup_dismissed and tut_step != TutStep.DONE
 
 	if tutorial_overlay:
@@ -3020,7 +3036,14 @@ func _on_train_pressed():
 	training_node = chosen
 	training = true
 	training_timer = TRAINING_TIME
-	_walk_via_road(chosen, SHELTER_POS + Vector2(0, 40), armory.position + Vector2(0, 20), _on_believer_arrived_at_armory)
+	# Step 1: walk down to shelter exit (onto the road, below the building)
+	# Step 2: follow road north to barracks Y, then horizontal into barracks door
+	var shelter_exit := SHELTER_POS + Vector2(0, 80)
+	var armory_door  := armory.position + Vector2(0, 20)
+	chosen.walk_to(shelter_exit)
+	chosen.reached_forced_target.connect(func():
+		_walk_via_road(chosen, shelter_exit, armory_door, _on_believer_arrived_at_armory)
+	, CONNECT_ONE_SHOT)
 	_update_training_ui()
 
 func _on_believer_arrived_at_armory():
@@ -3043,8 +3066,7 @@ func _complete_training():
 	believers_count -= 1
 	soldiers_count += 1
 	if training_node:
-		training_node.is_soldier = true
-		training_node.queue_redraw()
+		training_node.convert_to_soldier()
 		soldiers.append(training_node)
 		if garrison_built and garrison != null:
 			training_node.visible = true
@@ -3056,7 +3078,6 @@ func _complete_training():
 			training_node.position = armory.position + Vector2(0, 30)
 			training_node.needs_shelter = true
 			training_node.park()
-			training_node.queue_redraw()
 	_reset_training_ui()
 
 func _update_training_ui():
@@ -3076,9 +3097,13 @@ func _reset_training_ui():
 		training_label.text = "⚠  Soldier waiting — build a Garrison!"
 		train_btn.disabled = true
 		train_btn.text = "Soldier needs a home first"
+	elif believers_count <= 1:
+		training_label.text = "Need at least 2 believers to train"
+		train_btn.disabled = true
+		train_btn.text = "Train Soldier  (30 min)"
 	else:
 		training_label.text = "Ready to train"
-		train_btn.disabled = believers_count <= 1 or training_node != null
+		train_btn.disabled = false
 		train_btn.text = "Train Soldier  (30 min)"
 	training_bar.anchor_right = 0.0
 	training_rush_btn.visible = false
