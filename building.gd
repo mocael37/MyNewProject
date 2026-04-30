@@ -63,7 +63,6 @@ func _setup_png_sprite():
 	# Anchor base of sprite to node origin
 	var scaled_h := float(tex.get_height()) * sc
 	_sprite.position = Vector2(0, -scaled_h * 0.5 + 18.0)
-	_sprite.visible = not has_meta("under_construction")
 	add_child(_sprite)
 	# Resize collision to upper body only — leaves door area at bottom open
 	for child in get_children():
@@ -83,11 +82,10 @@ func _on_input_event(_viewport, event, _shape_idx):
 func _draw():
 	var under_construction: bool = has_meta("under_construction")
 
-	# PNG buildings use a Sprite2D child — show/hide it based on construction state
+	# PNG buildings use a Sprite2D child — ghost tint during construction
 	if _sprite != null:
-		_sprite.visible = not under_construction
-		if under_construction:
-			_draw_temple_construction()
+		_sprite.visible = true
+		_sprite.modulate = Color(0.60, 1.0, 0.60, 0.55) if under_construction else Color.WHITE
 		return
 
 	# Procedural buildings

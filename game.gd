@@ -61,7 +61,10 @@ var training: bool = false
 var training_timer: float = 0.0
 var training_node: CharacterBody2D = null
 
-# ── Camera / panning ─────────────────────────────────────────────────────────
+# ── Camera / panning / zoom ───────────────────────────────────────────────────
+const ZOOM_MIN    := 0.40   # furthest out  (sees more of the map)
+const ZOOM_MAX    := 2.50   # furthest in   (fine detail)
+const ZOOM_FACTOR := 1.12   # multiply per scroll notch
 var camera: Camera2D = null
 var is_panning := false
 var pan_start_mouse := Vector2.ZERO
@@ -188,6 +191,8 @@ var crusade_pending: Dictionary = {}     # stores results between phase1 and pha
 var marcus_obtained: bool = false
 var hero_deck_chip: PanelContainer = null
 var hero_deck_panel: PanelContainer = null
+var campaign_chip: PanelContainer = null
+var return_mission_chip: PanelContainer = null
 var generals_quarters: StaticBody2D = null
 var generals_quarters_built: bool = false
 var generals_quarters_build_row: HBoxContainer = null
@@ -210,6 +215,11 @@ var rush_pulse        := 0.0
 var placing_building  := false
 var placing_type      := ""    # "temple" / "hall_of_devoted" / "preacher_shelter"
 var placing_cost      := 0
+var placing_road      := false
+var placing_road_type := ""    # "road_h" / "road_v" / "road_corner" / "road_t"
+var road_rotation_deg := 0     # 0 / 90 / 180 / 270
+var road_ghost_sprite: Sprite2D = null
+var road_rotate_btn:   Button   = null
 
 # Active construction (one at a time)
 var active_construction_node: StaticBody2D = null
@@ -276,9 +286,12 @@ func _process(delta):
 		shelter_arrow.offset_top    = sp.y - 145
 		shelter_arrow.offset_bottom = sp.y - 105
 
-	# Ghost follows mouse during placement
+	# Ghosts follow mouse during placement
+	var _world_mouse := get_viewport().get_canvas_transform().affine_inverse() * get_viewport().get_mouse_position()
 	if placing_building and ghost_node:
-		ghost_node.position = get_viewport().get_canvas_transform().affine_inverse() * get_viewport().get_mouse_position()
+		ghost_node.position = _world_mouse
+	if placing_road and road_ghost_sprite:
+		road_ghost_sprite.position = _world_mouse
 
 	# Active construction countdown
 	if active_construction_timer > 0.0:
@@ -495,12 +508,13 @@ func _walk_via_road(node: CharacterBody2D, from_pos: Vector2, to_pos: Vector2, o
 			, CONNECT_ONE_SHOT)
 
 
-func _draw_road(from_pos: Vector2, to_pos: Vector2):
-	var road := _RoadSegment.new()
-	road.from_pos = from_pos
-	road.to_pos   = to_pos
-	world.add_child(road)
-	world.move_child(road, 1)  # just after grass, so road renders below trees and buildings
+func _show_road_hint(msg: String):
+	if tutorial_label == null:
+		return
+	tutorial_label.text = msg
+	get_tree().create_timer(5.0).timeout.connect(func():
+		if tutorial_label and tutorial_label.text == msg:
+			tutorial_label.text = "")
 
 
 
@@ -537,6 +551,7 @@ func _build_ui():
 	_build_top_bar(ui)
 	_build_build_button(ui)
 	_build_build_menu(ui)
+	_build_road_rotate_btn(ui)
 	_build_construction_panel(ui)
 	_build_conversion_panel(ui)
 	_build_training_panel(ui)
@@ -642,18 +657,43 @@ func _build_top_bar(ui: CanvasLayer):
 	camp_style.content_margin_right  = 8
 	camp_style.content_margin_top    = 4
 	camp_style.content_margin_bottom = 4
-	var camp_chip := PanelContainer.new()
-	camp_chip.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	camp_chip.add_theme_stylebox_override("panel", camp_style)
-	camp_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	campaign_chip = PanelContainer.new()
+	campaign_chip.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	campaign_chip.add_theme_stylebox_override("panel", camp_style)
+	campaign_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	campaign_chip.visible = not GameData.mission_active
 	var camp_lbl := Label.new()
 	camp_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	camp_lbl.text = "⚔ Mission"
 	camp_lbl.add_theme_font_size_override("font_size", 14)
 	camp_lbl.add_theme_color_override("font_color", Color(0.72, 1.00, 0.52))
-	camp_chip.add_child(camp_lbl)
-	camp_chip.gui_input.connect(_on_campaign_chip_input)
-	hbox.add_child(camp_chip)
+	campaign_chip.add_child(camp_lbl)
+	campaign_chip.gui_input.connect(_on_campaign_chip_input)
+	hbox.add_child(campaign_chip)
+
+	# Resume chip — only visible when a mission is already in progress
+	var ret_style := StyleBoxFlat.new()
+	ret_style.bg_color     = Color(0.42, 0.14, 0.06)
+	ret_style.border_color = Color(1.0, 0.45, 0.18)
+	ret_style.set_border_width_all(2)
+	ret_style.set_corner_radius_all(8)
+	ret_style.content_margin_left   = 8
+	ret_style.content_margin_right  = 8
+	ret_style.content_margin_top    = 4
+	ret_style.content_margin_bottom = 4
+	return_mission_chip = PanelContainer.new()
+	return_mission_chip.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	return_mission_chip.add_theme_stylebox_override("panel", ret_style)
+	return_mission_chip.mouse_filter = Control.MOUSE_FILTER_STOP
+	return_mission_chip.visible = GameData.mission_active
+	var ret_lbl := Label.new()
+	ret_lbl.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	ret_lbl.text = "▶ Mission"
+	ret_lbl.add_theme_font_size_override("font_size", 14)
+	ret_lbl.add_theme_color_override("font_color", Color(1.0, 0.65, 0.35))
+	return_mission_chip.add_child(ret_lbl)
+	return_mission_chip.gui_input.connect(_on_return_mission_input)
+	hbox.add_child(return_mission_chip)
 
 	_build_people_panel(ui)
 
@@ -832,6 +872,92 @@ func _build_build_button(ui: CanvasLayer):
 	ui.add_child(build_button)
 
 
+# ── Road placement ────────────────────────────────────────────────────────────
+
+func _build_road_rotate_btn(ui: CanvasLayer):
+	road_rotate_btn = Button.new()
+	road_rotate_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	road_rotate_btn.text = "↻  Rotate"
+	road_rotate_btn.add_theme_font_size_override("font_size", 15)
+	road_rotate_btn.add_theme_color_override("font_color", Color(1.0, 0.92, 0.28))
+	road_rotate_btn.anchor_left   = 0.5
+	road_rotate_btn.anchor_right  = 0.5
+	road_rotate_btn.anchor_top    = 1.0
+	road_rotate_btn.anchor_bottom = 1.0
+	road_rotate_btn.offset_left   = -70
+	road_rotate_btn.offset_right  =  70
+	road_rotate_btn.offset_top    = -130
+	road_rotate_btn.offset_bottom = -95
+	road_rotate_btn.visible = false
+	road_rotate_btn.pressed.connect(_on_road_rotate)
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0.35, 0.24, 0.06); s.border_color = Color(0.72, 0.54, 0.16)
+	s.set_border_width_all(2); s.set_corner_radius_all(6)
+	s.content_margin_top = 6; s.content_margin_bottom = 6
+	s.content_margin_left = 16; s.content_margin_right = 16
+	road_rotate_btn.add_theme_stylebox_override("normal", s)
+	ui.add_child(road_rotate_btn)
+
+func _on_road_rotate():
+	road_rotation_deg = (road_rotation_deg + 90) % 360
+	if road_ghost_sprite:
+		road_ghost_sprite.rotation_degrees = float(road_rotation_deg)
+
+func _road_texture(type: String) -> Texture2D:
+	match type:
+		"road_h":      return load("res://Comp_14- no bg.png")
+		"road_v":      return load("res://Comp_13- no bg.png")
+		"road_corner": return load("res://Comp_12- no bg.png")
+		"road_t":      return load("res://Comp_11- no bg.png")
+	return null
+
+func _apply_road_scale(spr: Sprite2D, type: String):
+	const TEX := 512.0
+	match type:
+		"road_h":      spr.scale = Vector2(200.0 / TEX, 72.0 / TEX)
+		"road_v":      spr.scale = Vector2(72.0 / TEX,  200.0 / TEX)
+		"road_corner": spr.scale = Vector2(138.0 / TEX, 138.0 / TEX)
+		"road_t":      spr.scale = Vector2(196.0 / TEX, 138.0 / TEX)
+	spr.rotation_degrees = float(road_rotation_deg)
+
+func _on_build_road_h():      _start_road_placement("road_h")
+func _on_build_road_v():      _start_road_placement("road_v")
+func _on_build_road_corner(): _start_road_placement("road_corner")
+func _on_build_road_t():      _start_road_placement("road_t")
+
+func _start_road_placement(type: String):
+	build_menu.visible = false
+	placing_road      = true
+	placing_road_type = type
+	road_rotation_deg = 0
+	road_ghost_sprite = Sprite2D.new()
+	road_ghost_sprite.texture = _road_texture(type)
+	_apply_road_scale(road_ghost_sprite, type)
+	road_ghost_sprite.modulate = Color(0.60, 1.0, 0.60, 0.55)
+	road_ghost_sprite.position = get_viewport().get_canvas_transform().affine_inverse() \
+		* get_viewport().get_mouse_position()
+	world.add_child(road_ghost_sprite)
+	if type in ["road_corner", "road_t"]:
+		road_rotate_btn.visible = true
+
+func _cancel_road_placement():
+	placing_road = false
+	placing_road_type = ""
+	road_rotation_deg = 0
+	if road_ghost_sprite:
+		road_ghost_sprite.queue_free()
+		road_ghost_sprite = null
+	road_rotate_btn.visible = false
+
+func _place_road_tile(pos: Vector2):
+	var spr := Sprite2D.new()
+	spr.texture = _road_texture(placing_road_type)
+	_apply_road_scale(spr, placing_road_type)
+	spr.position = pos
+	world.add_child(spr)
+	world.move_child(spr, 1)   # render below buildings and characters
+
+
 func _build_build_menu(ui: CanvasLayer):
 	build_menu = PanelContainer.new()
 	build_menu.layout_direction = Control.LAYOUT_DIRECTION_LTR
@@ -924,6 +1050,11 @@ func _build_build_menu(ui: CanvasLayer):
 	_add_build_row(list, "Wishing Well",    "A beautiful well — purely\ndecorative for your village",   "25g", _on_build_well,       Color(0.35, 0.65, 0.90))
 	_add_build_row(list, "Pumpkin Garden",  "A fenced garden — adds\ncharm to your settlement",         "30g", _on_build_garden,     Color(0.55, 0.80, 0.25))
 	_add_build_row(list, "Stone Pool",      "A stone cistern — gives\nyour village a serene look",       "35g", _on_build_stone_pool, Color(0.50, 0.70, 0.85))
+	# Roads
+	_add_build_row(list, "Road — Straight H", "Horizontal dirt path\n(click to lay, right-click to stop)",  "5g", _on_build_road_h,      Color(0.65, 0.50, 0.25))
+	_add_build_row(list, "Road — Straight V", "Vertical dirt path\n(click to lay, right-click to stop)",    "5g", _on_build_road_v,      Color(0.65, 0.50, 0.25))
+	_add_build_row(list, "Road — Corner",     "L-shaped corner\nPress R or Rotate to turn",                 "5g", _on_build_road_corner, Color(0.65, 0.50, 0.25))
+	_add_build_row(list, "Road — T-Junction", "T-shaped junction\nPress R or Rotate to turn",               "5g", _on_build_road_t,      Color(0.65, 0.50, 0.25))
 
 	# Tutorial arrow — points at the temple row, pulses red, hidden once built
 	temple_build_indicator = Label.new()
@@ -2291,43 +2422,84 @@ func _build_construction_panel(ui: CanvasLayer):
 	construction_panel.anchor_bottom = 1.0
 	construction_panel.offset_left   = 8
 	construction_panel.offset_right  = -8
-	construction_panel.offset_top    = -118
-	construction_panel.offset_bottom = -60
+	construction_panel.offset_top    = -155
+	construction_panel.offset_bottom = -48
 	construction_panel.visible = false
+
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.05, 0.02, 0.95)
+	panel_style.border_color = Color(0.72, 0.54, 0.16)
+	panel_style.set_border_width_all(2)
+	panel_style.set_corner_radius_all(8)
+	panel_style.content_margin_top    = 8
+	panel_style.content_margin_bottom = 8
+	panel_style.content_margin_left   = 14
+	panel_style.content_margin_right  = 14
+	construction_panel.add_theme_stylebox_override("panel", panel_style)
 	ui.add_child(construction_panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
+	vbox.add_theme_constant_override("separation", 7)
 	construction_panel.add_child(vbox)
 
-	# Title row: name + time
+	# Title: building name + countdown
 	construction_label = Label.new()
 	construction_label.layout_direction = Control.LAYOUT_DIRECTION_LTR
-	construction_label.text = "Small Temple — 5:00"
-	construction_label.add_theme_font_size_override("font_size", 14)
+	construction_label.text = "Building — 5:00"
+	construction_label.add_theme_font_size_override("font_size", 15)
+	construction_label.add_theme_color_override("font_color", Color(0.98, 0.84, 0.34))
+	construction_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.75))
+	construction_label.add_theme_constant_override("shadow_offset_x", 1)
+	construction_label.add_theme_constant_override("shadow_offset_y", 1)
 	vbox.add_child(construction_label)
 
-	# Progress bar (bg + fill)
+	# Progress bar — dark bg with amber fill and shine strip
 	var bar_bg := ColorRect.new()
-	bar_bg.color = Color(0.15, 0.12, 0.20)
-	bar_bg.custom_minimum_size = Vector2(0, 10)
+	bar_bg.color = Color(0.06, 0.04, 0.01)
+	bar_bg.custom_minimum_size = Vector2(0, 20)
 	bar_bg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(bar_bg)
 
 	construction_bar = ColorRect.new()
-	construction_bar.color = Color(0.30, 0.75, 0.35)
+	construction_bar.color = Color(0.88, 0.62, 0.12)
 	construction_bar.anchor_top    = 0.0
 	construction_bar.anchor_bottom = 1.0
 	construction_bar.anchor_left   = 0.0
-	construction_bar.anchor_right  = 0.0   # grows as construction progresses
+	construction_bar.anchor_right  = 0.0
 	bar_bg.add_child(construction_bar)
 
-	# Rush button
+	var bar_shine := ColorRect.new()
+	bar_shine.color = Color(1.0, 0.96, 0.55, 0.45)
+	bar_shine.anchor_top    = 0.0
+	bar_shine.anchor_bottom = 0.0
+	bar_shine.anchor_left   = 0.0
+	bar_shine.anchor_right  = 1.0
+	bar_shine.offset_top    = 2
+	bar_shine.offset_bottom = 7
+	construction_bar.add_child(bar_shine)
+
+	# Rush button — warm amber style
 	rush_button = Button.new()
 	rush_button.layout_direction = Control.LAYOUT_DIRECTION_LTR
 	rush_button.text = "⚡  Rush!  (1 Faith Point)"
 	rush_button.add_theme_font_size_override("font_size", 14)
+	rush_button.add_theme_color_override("font_color",          Color(1.00, 0.92, 0.28))
+	rush_button.add_theme_color_override("font_hover_color",    Color(1.00, 0.98, 0.55))
+	rush_button.add_theme_color_override("font_pressed_color",  Color(0.90, 0.78, 0.18))
+	rush_button.add_theme_color_override("font_disabled_color", Color(0.55, 0.44, 0.22))
 	rush_button.pressed.connect(_on_rush_pressed)
+
+	var _btn_mk := func(bg: Color, border: Color) -> StyleBoxFlat:
+		var s := StyleBoxFlat.new()
+		s.bg_color = bg; s.border_color = border
+		s.set_border_width_all(2); s.set_corner_radius_all(6)
+		s.content_margin_top = 5; s.content_margin_bottom = 5
+		s.content_margin_left = 14; s.content_margin_right = 14
+		return s
+	rush_button.add_theme_stylebox_override("normal",   _btn_mk.call(Color(0.38, 0.22, 0.05), Color(0.78, 0.58, 0.16)))
+	rush_button.add_theme_stylebox_override("hover",    _btn_mk.call(Color(0.52, 0.32, 0.08), Color(0.95, 0.74, 0.24)))
+	rush_button.add_theme_stylebox_override("pressed",  _btn_mk.call(Color(0.25, 0.14, 0.03), Color(0.60, 0.44, 0.12)))
+	rush_button.add_theme_stylebox_override("disabled", _btn_mk.call(Color(0.18, 0.14, 0.08), Color(0.38, 0.30, 0.16)))
 	vbox.add_child(rush_button)
 
 
@@ -2491,6 +2663,8 @@ func _pulse_build_button(delta: float):
 
 # ── Build actions ─────────────────────────────────────────────────────────────
 func _on_build_pressed():
+	if placing_road:
+		_cancel_road_placement()
 	if placing_building:
 		_cancel_placement()
 		return
@@ -2658,19 +2832,19 @@ func _complete_construction():
 		"temple":
 			temple = b
 			b.tapped.connect(_on_temple_tapped)
-			_draw_road(SHELTER_POS, b.position)
+			_show_road_hint("Believers need a road to reach the Temple!\nTap Build → Roads to lay a path.")
 			if tut_step == TutStep.RUSH_PROMPT:
 				tut_step = TutStep.TEMPLE_COMPLETE
 				tut_popup_dismissed = false
 				_update_tutorial()
 		"hall_of_devoted":
 			b.tapped.connect(_on_hall_tapped)
-			_draw_road(SHELTER_POS, b.position)
+			_show_road_hint("Connect the Hall of the Devoted to the Shelter with a road\nso Believers can walk there to become Preachers.")
 			_reset_conversion_ui()
 		"preacher_shelter":
 			preacher_shelter_built = true
 			b.tapped.connect(_on_preacher_shelter_tapped)
-			_draw_road(hall_of_devoted.position, b.position)
+			_show_road_hint("Build a road from the Hall to the Preacher Shelter\nso converted Preachers can reach their home.")
 			# If a preacher was waiting at the hall, send them over now
 			if preacher_waiting_at_hall and converting_node != null:
 				preacher_waiting_at_hall = false
@@ -2678,12 +2852,12 @@ func _complete_construction():
 		"armory":
 			armory_built = true
 			b.tapped.connect(_on_armory_tapped)
-			_draw_road(SHELTER_POS, b.position)
+			_show_road_hint("Build a road to the Barracks so Believers\ncan walk there to begin their training.")
 			_reset_training_ui()
 		"garrison":
 			garrison_built = true
 			b.tapped.connect(_on_garrison_tapped)
-			_draw_road(armory.position, b.position)
+			_show_road_hint("Connect the Barracks to the Garrison with a road\nso trained Soldiers can march to their post.")
 			# If a soldier was waiting at the barracks, send them over now
 			if soldier_waiting_at_armory and training_node != null:
 				soldier_waiting_at_armory = false
@@ -2692,7 +2866,6 @@ func _complete_construction():
 			generals_quarters_built = true
 			generals_quarters = b
 			b.tapped.connect(_on_generals_quarters_tapped)
-			_draw_road(garrison.position, b.position)
 			# Spawn Marcus wandering around his new quarters
 			var marcus_script := load("res://marcus_character.gd")
 			marcus_character_node = marcus_script.new()
@@ -2704,7 +2877,6 @@ func _complete_construction():
 		"shelter":
 			believer_shelter_count += 1
 			believer_capacity = believer_shelter_count * 5
-			_draw_road(SHELTER_POS, b.position)
 			var shelter_ref := b
 			extra_shelter_buildings.append(b)
 			b.tapped.connect(func():
@@ -3110,16 +3282,58 @@ func _reset_training_ui():
 
 
 # ── Placement input + map panning ────────────────────────────────────────────
+func _zoom_camera(screen_pivot: Vector2, direction: int):
+	var old_zoom := camera.zoom.x
+	var new_zoom: float = clampf(
+		old_zoom * (ZOOM_FACTOR if direction > 0 else 1.0 / ZOOM_FACTOR),
+		ZOOM_MIN, ZOOM_MAX)
+	if is_equal_approx(new_zoom, old_zoom):
+		return
+	# Keep the world point under the cursor fixed while zooming
+	var vp_center  := get_viewport().get_visible_rect().size * 0.5
+	var world_pivot := camera.position + (screen_pivot - vp_center) / old_zoom
+	camera.zoom     = Vector2(new_zoom, new_zoom)
+	camera.position = world_pivot - (screen_pivot - vp_center) / new_zoom
+
+
 # Use _input (not _unhandled_input) so Control nodes eating mouse events don't block us
 func _input(event: InputEvent):
-	# Map panning: right-click drag (when not placing)
+	# Map panning: right-click drag — divide by zoom so pan speed feels consistent
 	if event is InputEventMouseMotion and is_panning:
-		camera.position = pan_start_cam - (event.position - pan_start_mouse)
+		camera.position = pan_start_cam - (event.position - pan_start_mouse) / camera.zoom.x
 		get_viewport().set_input_as_handled()
+		return
+
+	# Scroll-wheel zoom
+	var mb_early := event as InputEventMouseButton
+	if mb_early != null and mb_early.pressed and \
+			mb_early.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		_zoom_camera(mb_early.position, 1 if mb_early.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+		get_viewport().set_input_as_handled()
+		return
+
+	# R key rotates corner/T road tiles during placement
+	var key := event as InputEventKey
+	if key != null and key.pressed and placing_road:
+		if key.keycode == KEY_R:
+			_on_road_rotate()
+			get_viewport().set_input_as_handled()
 		return
 
 	var mb := event as InputEventMouseButton
 	if mb == null:
+		return
+
+	# Road placement: left-click places a tile, right-click cancels
+	if placing_road:
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			get_viewport().set_input_as_handled()
+			_cancel_road_placement()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			var road_pos := get_viewport().get_canvas_transform().affine_inverse() \
+				* get_viewport().get_mouse_position()
+			get_viewport().set_input_as_handled()
+			_place_road_tile(road_pos)
 		return
 
 	if mb.button_index == MOUSE_BUTTON_RIGHT:
@@ -4139,5 +4353,10 @@ func _on_hero_deck_chip_input(event: InputEvent):
 
 
 func _on_campaign_chip_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		GameData.mission_active = false   # fresh start — discard any saved state
+		get_tree().change_scene_to_file("res://campaign_map.tscn")
+
+func _on_return_mission_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		get_tree().change_scene_to_file("res://campaign_map.tscn")

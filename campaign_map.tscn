@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://cm4qagn8b7t0x"]
 
-[ext_resource type="Script" path="res://campaign_map.gd" id="1_camp01"]
+[ext_resource type="Script" uid="uid://cxiwlukb567k2" path="res://campaign_map.gd" id="1_camp01"]
 
-[node name="CampaignMap" type="Node2D"]
+[node name="CampaignMap" type="Node2D" unique_id=1305200935]
 script = ExtResource("1_camp01")

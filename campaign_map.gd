@@ -9,6 +9,9 @@ const CONVERT_RATE      := 0.85    # resistance drained per second while in rang
 const FIGHT_DURATION    := 4.0     # seconds soldier fights at blockade
 const MAP_W             := 2200
 const MAP_H             := 1100
+const ZOOM_MIN          := 0.40
+const ZOOM_MAX          := 2.50
+const ZOOM_FACTOR       := 1.12
 
 # Palette
 const COL_GROUND := Color(0.72, 0.65, 0.50)
@@ -90,6 +93,7 @@ var blockade_guards  : Array = []
 
 var is_panning   : bool    = false
 var pan_last_pos : Vector2 = Vector2.ZERO
+var base_camp_btn: Button  = null
 
 # ── Ready ─────────────────────────────────────────────────────────────────────
 
@@ -105,6 +109,10 @@ func _ready() -> void:
 	_spawn_preacher()
 	_spawn_soldier()
 	_spawn_blockade_guards()
+	if GameData.mission_active:
+		_restore_mission_state()
+	else:
+		GameData.mission_active = true
 
 func _apply_hero_bonus() -> void:
 	# Placeholder: wire to GameData hero selection when hero system is ready
@@ -152,6 +160,18 @@ func _build_camera() -> void:
 	cam.limit_top    = 0
 	cam.limit_bottom = MAP_H
 	add_child(cam)
+
+func _zoom_camera(screen_pivot: Vector2, direction: int) -> void:
+	var old_zoom := cam.zoom.x
+	var new_zoom: float = clampf(
+		old_zoom * (ZOOM_FACTOR if direction > 0 else 1.0 / ZOOM_FACTOR),
+		ZOOM_MIN, ZOOM_MAX)
+	if is_equal_approx(new_zoom, old_zoom):
+		return
+	var vp_center   := get_viewport().get_visible_rect().size * 0.5
+	var world_pivot := cam.position + (screen_pivot - vp_center) / old_zoom
+	cam.zoom        = Vector2(new_zoom, new_zoom)
+	cam.position    = world_pivot - (screen_pivot - vp_center) / new_zoom
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 
@@ -254,6 +274,34 @@ func _build_ui() -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	ui_layer.add_child(hint)
 
+	# Base Camp button — lets player switch back to base while mission runs
+	var btn_style := StyleBoxFlat.new()
+	btn_style.bg_color     = Color(0.14, 0.22, 0.38, 0.95)
+	btn_style.border_color = Color(0.42, 0.72, 1.0)
+	btn_style.set_border_width_all(2)
+	btn_style.set_corner_radius_all(8)
+	btn_style.content_margin_left   = 12
+	btn_style.content_margin_right  = 12
+	btn_style.content_margin_top    = 6
+	btn_style.content_margin_bottom = 6
+	var btn_hover := btn_style.duplicate() as StyleBoxFlat
+	btn_hover.bg_color = Color(0.20, 0.32, 0.55, 0.95)
+	base_camp_btn = Button.new()
+	base_camp_btn.layout_direction = Control.LAYOUT_DIRECTION_LTR
+	base_camp_btn.text = "⌂  Base Camp"
+	base_camp_btn.add_theme_font_size_override("font_size", 14)
+	base_camp_btn.add_theme_color_override("font_color", Color(0.70, 0.90, 1.0))
+	base_camp_btn.add_theme_stylebox_override("normal",   btn_style)
+	base_camp_btn.add_theme_stylebox_override("hover",    btn_hover)
+	base_camp_btn.add_theme_stylebox_override("pressed",  btn_hover)
+	base_camp_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	base_camp_btn.offset_left   = 248
+	base_camp_btn.offset_right  = 390
+	base_camp_btn.offset_top    = 8
+	base_camp_btn.offset_bottom = 40
+	base_camp_btn.connect("pressed", _go_to_base)
+	ui_layer.add_child(base_camp_btn)
+
 	_build_result_panel()
 
 func _on_bar_input(event: InputEvent, idx: int) -> void:
@@ -323,6 +371,52 @@ func _build_result_panel() -> void:
 	vbox.add_child(ret_btn)
 
 	ui_layer.add_child(result_panel)
+
+# ── Base-camp switch ──────────────────────────────────────────────────────────
+
+func _go_to_base() -> void:
+	_save_mission_state()
+	get_tree().change_scene_to_file("res://game.tscn")
+
+func _save_mission_state() -> void:
+	GameData.mission_active            = not campaign_ended
+	GameData.mission_exit_ticks_msec   = Time.get_ticks_msec()
+	GameData.mission_timer_remaining   = timer_remaining
+	GameData.mission_converted_count   = converted_count
+	GameData.mission_campaign_ended    = campaign_ended
+	GameData.mission_blockade_alive    = blockade_alive
+	GameData.mission_villager_resist   = villager_resist.duplicate()
+	GameData.mission_villager_done     = villager_done.duplicate()
+	GameData.mission_villager_active   = villager_active.duplicate()
+	var positions: Array = []
+	for v: CharacterBody2D in villager_nodes:
+		positions.append(v.global_position)
+	GameData.mission_villager_positions = positions
+
+func _restore_mission_state() -> void:
+	var elapsed := float(Time.get_ticks_msec() - GameData.mission_exit_ticks_msec) / 1000.0
+	timer_remaining = maxf(0.0, GameData.mission_timer_remaining - elapsed)
+	converted_count = GameData.mission_converted_count
+	campaign_ended  = GameData.mission_campaign_ended
+	blockade_alive  = GameData.mission_blockade_alive
+	villager_resist  = GameData.mission_villager_resist.duplicate()
+	villager_done    = GameData.mission_villager_done.duplicate()
+	villager_active  = GameData.mission_villager_active.duplicate()
+	for i in range(mini(villager_nodes.size(), GameData.mission_villager_positions.size())):
+		var pos := GameData.mission_villager_positions[i] as Vector2
+		villager_nodes[i].global_position = pos
+		if villager_done[i]:
+			villager_nodes[i].visible = false
+			villager_nodes[i].park()
+		elif villager_active[i]:
+			bar_bgs[i].visible = true
+	if not blockade_alive:
+		queue_redraw()
+	if campaign_ended:
+		_end_campaign()
+	elif timer_remaining <= 0.0:
+		_end_campaign()
+	_refresh_converted_label()
 
 # ── Spawning ──────────────────────────────────────────────────────────────────
 
@@ -439,6 +533,13 @@ func _spawn_soldier() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if campaign_ended:
 		return
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_zoom_camera(event.position, 1)
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_zoom_camera(event.position, -1)
+			return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			var world_pos : Vector2 = get_viewport().get_canvas_transform().affine_inverse() * event.position
@@ -469,9 +570,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and is_panning:
 		var delta : Vector2 = pan_last_pos - event.position
 		pan_last_pos = event.position
-		cam.position += delta
-		cam.position.x = clamp(cam.position.x, 0.0, float(MAP_W))
-		cam.position.y = clamp(cam.position.y, 0.0, float(MAP_H))
+		cam.position += delta / cam.zoom.x
 
 # ── Process ───────────────────────────────────────────────────────────────────
 
@@ -592,6 +691,9 @@ func _end_campaign() -> void:
 	if campaign_ended:
 		return
 	campaign_ended = true
+	GameData.mission_active = false
+	if base_camp_btn:
+		base_camp_btn.visible = false
 	if preacher_node:
 		preacher_node.park()
 	if soldier_node:
